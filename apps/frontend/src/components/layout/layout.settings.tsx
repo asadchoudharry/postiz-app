@@ -48,6 +48,7 @@ extend(isBetween);
 export const LayoutSettings = ({ children }: { children: ReactNode }) => {
   const fetch = useFetch();
   const { isGeneral } = useVariables();
+  const rektrsSocial = process.env.NEXT_PUBLIC_REKTRS_SOCIAL_BRAND === 'true';
   const { backendUrl, billingEnabled } = useVariables();
   const searchParams = useSearchParams();
   const load = useCallback(async (path: string) => {
@@ -91,17 +92,27 @@ export const LayoutSettings = ({ children }: { children: ReactNode }) => {
                 className="text-2xl flex items-center gap-[10px] text-textColor order-1"
               >
                 <div className="min-w-[55px]">
-                  <Image
-                    src={isGeneral ? '/postiz.svg' : '/logo.svg'}
-                    width={55}
-                    height={53}
-                    alt="Logo"
-                  />
+                  {rektrsSocial ? (
+                    <div aria-hidden="true" className="flex h-[53px] w-[55px] items-center justify-center rounded-xl bg-customColor51 text-2xl font-bold text-white">
+                      R
+                    </div>
+                  ) : (
+                    <Image
+                      src={isGeneral ? '/postiz.svg' : '/logo.svg'}
+                      width={55}
+                      height={53}
+                      alt="Logo"
+                    />
+                  )}
                 </div>
                 <div
                   className={clsx(!isGeneral ? 'mt-[12px]' : 'min-w-[80px]')}
                 >
-                  {isGeneral ? (
+                  {rektrsSocial ? (
+                    <div className="text-xl font-bold tracking-tight" aria-label="REKTRS Social">
+                      REKTRS <span className="font-medium">Social</span>
+                    </div>
+                  ) : isGeneral ? (
                     <svg
                       width="80"
                       height="75"

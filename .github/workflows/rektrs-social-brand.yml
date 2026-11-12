@@ -1,0 +1,27 @@
+name: REKTRS Social identity guard
+
+on:
+  pull_request:
+    paths:
+      - 'apps/frontend/src/app/auth/**'
+      - 'apps/frontend/src/components/auth/login.tsx'
+      - 'apps/frontend/src/components/layout/layout.settings.tsx'
+      - '.env.example'
+      - 'scripts/rektrs-social-brand.test.mjs'
+      - '.github/workflows/rektrs-social-brand.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate opt-in branding boundaries
+        run: node --test scripts/rektrs-social-brand.test.mjs
