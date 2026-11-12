@@ -1,0 +1,27 @@
+name: REKTRS Social content review
+
+on:
+  pull_request:
+    paths:
+      - 'apps/frontend/src/components/launches/rektrs-**'
+      - 'apps/frontend/src/components/launches/add.edit.model.tsx'
+      - 'scripts/rektrs-content-review.test.mjs'
+      - '.env.example'
+      - '.github/workflows/rektrs-social-content-review.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  editorial-regression:
+    name: Editorial rule-engine and integration contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run content review tests without app secrets or APIs
+        run: node --experimental-strip-types --test scripts/rektrs-content-review.test.mjs
