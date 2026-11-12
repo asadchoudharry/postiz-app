@@ -59,6 +59,7 @@ import { DropFiles } from '@gitroom/frontend/components/layout/drop.files';
 import { SelectCustomer } from '@gitroom/frontend/components/launches/select.customer';
 import { TagsComponent } from './tags.component';
 import { RepeatComponent } from '@gitroom/frontend/components/launches/repeat.component';
+import { RektrsContentReview } from '@gitroom/frontend/components/launches/rektrs-content-review';
 
 function countCharacters(text: string, type: string): number {
   if (type !== 'x') {
@@ -731,6 +732,12 @@ export const AddEditModal: FC<{
                     </div>
                   </Fragment>
                 ))}
+                {process.env.NEXT_PUBLIC_REKTRS_CONTENT_REVIEW === 'true' && (
+                  <RektrsContentReview
+                    contents={value.map((post) => post.content)}
+                    channelCount={selectedIntegrations.length}
+                  />
+                )}
               </>
             ) : null}
           </div>
