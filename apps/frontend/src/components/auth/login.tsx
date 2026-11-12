@@ -25,6 +25,7 @@ type Inputs = {
 export function Login() {
   const [loading, setLoading] = useState(false);
   const { isGeneral, neynarClientId, billingEnabled } = useVariables();
+  const rektrsSocial = process.env.NEXT_PUBLIC_REKTRS_SOCIAL_BRAND === 'true';
   const resolver = useMemo(() => {
     return classValidatorResolver(LoginUserDto);
   }, []);
@@ -119,6 +120,17 @@ export function Login() {
               Forgot password
             </Link>
           </p>
+          {rektrsSocial && (
+            <p className="mt-5 text-xs text-center leading-relaxed">
+              <Link href="https://rektrs.com/social/" className="underline">
+                About REKTRS Social
+              </Link>
+              <span aria-hidden="true"> · </span>
+              <Link href="https://rektrs.com/privacy-policy/" className="underline">
+                Privacy Policy
+              </Link>
+            </p>
+          )}
         </div>
       </form>
     </FormProvider>
