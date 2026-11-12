@@ -47,3 +47,27 @@ Never delete an integration or post, trigger publishing, rotate credentials, res
 | Expanded privacy policy | `rektrswebsite/app/privacy-policy/page.tsx` | Code present, production state unknown |
 | Fork source | `postiz-app` `main` | Nx/Postiz fork, main last seen commit Apr 2025 |
 | Hostinger connector | VPS list + Docker Manager call | VM present; Docker Manager unsupported; Postiz host not established |
+
+## Execution evidence update — 12 November 2026
+
+| Work item | Source / artifact | Status |
+| --- | --- | --- |
+| P0 read-only public preflight | [PR #2](https://github.com/asadchoudharry/postiz-app/pull/2), scripts/rektrs-social-preflight.mjs | CODE_IMPLEMENTED on draft branch; local 6/6 tests PASS; GitHub CI PASS |
+| P0 live endpoint probing | Manual-only workflow, PR #2 | NOT RUN against production; not a production health verdict |
+| P2 guarded brand identity | [PR #3](https://github.com/asadchoudharry/postiz-app/pull/3) | CODE_IMPLEMENTED on draft branch; static CI PASS; not rendered, merged or deployed |
+| Postiz Cloud connector | groupList and integrationList from 2026-11-12 | HTTP 403, underlying auth/WAF/proxy cause UNKNOWN |
+| Public corporate routes | rektrswebsite source, app/social/page.tsx and app/privacy-policy/page.tsx | SOURCE VERIFIED; production HTTP status not verified |
+| Hostinger domain access | Hostinger DNS API on connected account | DNS:4002, account does not own rektrs.com; not evidence of actual DNS misconfiguration |
+| Hostinger VPS inventory | Hostinger VM and Docker Manager API | One running VM in connected account; Docker Manager unsupported for its OS; **no proof** VM serves REKTRS |
+| Production backups, OAuth and version | No authorized shell or deployment metadata yet | BLOCKED / NOT VERIFIED |
+
+### Safe follow-up execution order
+
+1. Obtain a verified map of the actual Postiz hosting/Dokploy deployment from authorized infrastructure access. Confirm the live image digest and corresponding Git SHA before modifying code.
+2. Inspect proxy/Cloudflare/WAF and Postiz backend access logs to identify where the 403 arises. Preserve authorization checks and do not globally disable WAF.
+3. Confirm independent public HTTPS responses for /social/ and /privacy-policy/, including Google scope wording and support contact. Deploy website source only after release review.
+4. Produce encrypted PostgreSQL/media/config backups and successfully restore into isolated staging; confirm scheduling/publishing disabled on staging.
+5. Merge release-reviewed PRs and enable NEXT_PUBLIC_REKTRS_SOCIAL_BRAND only in the verified REKTRS frontend build after login/redirect/role and visual QA.
+6. Complete Google OAuth scope, redirect and revocation checks; resubmit verification after the public website and app are verifiably aligned.
+
+**No production services, accounts, subscriptions, databases, scheduled posts, provider permissions, or DNS records were modified by these PRs.**
