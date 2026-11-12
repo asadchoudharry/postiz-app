@@ -1,0 +1,60 @@
+name: rektrs social consolidated candidate checks
+
+on:
+  pull_request:
+    paths:
+      - 'apps/frontend/**'
+      - 'libraries/**'
+      - 'scripts/rektrs-*'
+      - 'scripts/test_rektrs*'
+      - 'scripts/ui/rektrs-review.test.cjs'
+      - 'docs/rektrs-social/**'
+      - '.github/workflows/rektrs-social-release-checks.yml'
+      - '.env.example'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rektrs-candidate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: node --experimental-strip-types --test scripts/rektrs-*.test.mjs
+      - run: python -m unittest discover -s scripts -p 'test_rektrs*.py' -v
+  application-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NX_DAEMON: 'false'
+      NX_ADD_PLUGINS: 'false'
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_REKTRS_SOCIAL_BRAND: 'true'
+      NEXT_PUBLIC_REKTRS_CONTENT_REVIEW: 'true'
+      FRONTEND_URL: 'http://localhost:4200'
+      NEXT_PUBLIC_BACKEND_URL: 'http://localhost:3000'
+      DATABASE_URL: 'postgresql://build:build@127.0.0.1:5432/build'
+      IS_GENERAL: 'true'
+      STORAGE_PROVIDER: 'local'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.17.0'
+          cache: 'npm'
+      - run: npm ci --legacy-peer-deps --no-audit --no-fund
+      - run: node --test scripts/ui/rektrs-review.test.cjs
+      - run: npm run build
+    # This candidate never publishes an image, mutates a DB, calls providers or deploys.

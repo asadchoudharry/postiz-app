@@ -8,8 +8,10 @@ import { isGeneralServerSide } from '@gitroom/helpers/utils/is.general.server.si
 import Link from 'next/link';
 
 export const metadata: Metadata = {
-  title: `${isGeneralServerSide() ? 'Postiz' : 'Gitroom'} Register`,
-  description: '',
+  title: `${process.env.NEXT_PUBLIC_REKTRS_SOCIAL_BRAND === 'true' ? 'REKTRS Social' : isGeneralServerSide() ? 'Postiz' : 'Gitroom'} Register`,
+  description: process.env.NEXT_PUBLIC_REKTRS_SOCIAL_BRAND === 'true'
+    ? 'REKTRS Social is a self-hosted social media management and publishing workspace.'
+    : '',
 };
 
 export default async function Auth() {

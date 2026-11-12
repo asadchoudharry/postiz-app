@@ -12,6 +12,7 @@ export default async function AuthLayout({
 }: {
   children: ReactNode;
 }) {
+  const rektrsSocial = process.env.NEXT_PUBLIC_REKTRS_SOCIAL_BRAND === 'true';
   return (
     <>
       <ReturnUrlComponent />
@@ -20,16 +21,26 @@ export default async function AuthLayout({
         <div className="w-full max-w-lg h-[614px] flex flex-col bg-loginBox bg-no-repeat bg-contain">
           <div className="w-full relative">
             <div className="custom:fixed custom:text-left custom:left-[20px] custom:justify-start custom:top-[20px] absolute -top-[100px] text-textColor justify-center items-center w-full flex gap-[10px]">
-              <Image
-                src={isGeneralServerSide() ? '/postiz.svg' : '/logo.svg'}
-                width={55}
-                height={53}
-                alt="Logo"
-              />
+              {rektrsSocial ? (
+                <div aria-hidden="true" className="flex h-[53px] w-[55px] items-center justify-center rounded-xl bg-customColor51 text-2xl font-bold text-white">
+                  R
+                </div>
+              ) : (
+                <Image
+                  src={isGeneralServerSide() ? '/postiz.svg' : '/logo.svg'}
+                  width={55}
+                  height={53}
+                  alt="Logo"
+                />
+              )}
               <div
                 className={clsx(!isGeneralServerSide() ? 'mt-[12px]' : 'min-w-[80px]')}
               >
-                {isGeneralServerSide() ? (
+                {rektrsSocial ? (
+                  <div className="text-2xl font-bold tracking-tight" aria-label="REKTRS Social">
+                    REKTRS <span className="font-medium">Social</span>
+                  </div>
+                ) : isGeneralServerSide() ? (
                   <svg
                     width="80"
                     height="36.5"

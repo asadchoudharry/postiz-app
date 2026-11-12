@@ -56,4 +56,6 @@ Thumbs.db
 
 # ignore Secrets folder
 .secrets/
+__pycache__/
+*.pyc
 libraries/plugins/src/plugins.ts

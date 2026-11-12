@@ -1,0 +1,38 @@
+{
+  "kind": "rektrs_social_read_only_preflight",
+  "version": 1,
+  "checked_at": "2026-11-12T21:17:03.807Z",
+  "overall": "NOT_READY",
+  "checks": [
+    {
+      "check": "oauth_homepage",
+      "status": 404,
+      "final_url": "https://rektrs.com/social",
+      "redirect_count": 1,
+      "outcome": "FAIL",
+      "reason": "http_status_not_200"
+    },
+    {
+      "check": "privacy_policy",
+      "status": 200,
+      "final_url": "https://rektrs.com/privacy-policy",
+      "redirect_count": 1,
+      "outcome": "FAIL",
+      "reason": "privacy_content_missing",
+      "missing": [
+        "google",
+        "youtube",
+        "revok"
+      ]
+    },
+    {
+      "check": "postiz_login_reachability",
+      "status": 200,
+      "final_url": "https://social.rektrs.com/auth",
+      "redirect_count": 1,
+      "outcome": "PASS",
+      "reason": "public_read_only_check"
+    }
+  ],
+  "note": "Does not verify authenticated Postiz APIs, Google consent approval, backups, deployed revision or social-provider publishing."
+}
