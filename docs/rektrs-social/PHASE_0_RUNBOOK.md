@@ -71,3 +71,8 @@ Never delete an integration or post, trigger publishing, rotate credentials, res
 6. Complete Google OAuth scope, redirect and revocation checks; resubmit verification after the public website and app are verifiably aligned.
 
 **No production services, accounts, subscriptions, databases, scheduled posts, provider permissions, or DNS records were modified by these PRs.**
+
+### Product advancement status — 12 November 2026
+
+- [PR #4](https://github.com/asadchoudharry/postiz-app/pull/4) implements an opt-in, nonblocking REKTRS Content Review panel in the global post composer with Unicode-compatible editorial heuristics, inline states and copyable review. GitHub Actions regression workflow succeeded (11 tests). This is a P2/P3 **code implementation**, not a deployment or a server-enforced approval process.
+- The release gate remains: actual Postiz runtime mapping and revision, backup/restore rehearsal, 403 API diagnosis, staging frontend compilation and browser review. Do not enable the feature flag in production until completed.
