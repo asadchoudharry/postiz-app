@@ -36,7 +36,7 @@ export default async function AuthLayout({
                 Plan, review and schedule your social content in one workspace.
               </p>
               <p className="mt-4 text-sm text-[#ACA6BD]">
-                Built on Postiz. Publishing and account permissions remain under your control.
+                Publishing and account permissions remain under your control.
               </p>
             </div>
           ) : (

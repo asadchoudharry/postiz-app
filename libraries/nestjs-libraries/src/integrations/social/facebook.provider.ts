@@ -94,7 +94,7 @@ export class FacebookProvider extends SocialAbstract implements SocialProvider {
       return {
         type: 'refresh-token' as const,
         value:
-          'Postiz is not authorized to publish as this page, please reconnect the channel',
+          'REKTRS Social is not authorized to publish as this page, please reconnect the channel',
       };
     }
 
