@@ -5,7 +5,15 @@ import { RektrsActor } from './rektrs.actor';
 
 export interface RektrsAuditWrite {
   action: string;
-  entityType: 'Brand' | 'Campaign' | 'Brief' | 'Approval' | 'Post' | 'Policy';
+  entityType:
+    | 'Brand'
+    | 'Campaign'
+    | 'Brief'
+    | 'Approval'
+    | 'Post'
+    | 'Policy'
+    | 'Lead'
+    | 'LeadRule';
   entityId: string;
   beforeHash?: string;
   afterHash?: string;

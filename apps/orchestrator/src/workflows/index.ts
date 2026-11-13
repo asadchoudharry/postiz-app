@@ -15,6 +15,7 @@ export * from './autopost.workflow';
 export * from './digest.email.workflow';
 export * from './missing.post.workflow';
 export * from './rektrs.reminders.workflow';
+export * from './rektrs.leads.workflow';
 export * from './send.email.workflow';
 export * from './refresh.token.workflow';
 export * from './streak.workflow';

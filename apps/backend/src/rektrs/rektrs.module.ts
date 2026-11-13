@@ -10,6 +10,8 @@ import {
   RektrsAuditController,
   RektrsOrgController,
 } from '@gitroom/backend/rektrs/rektrs.org.controller';
+import { RektrsLeadsController } from '@gitroom/backend/rektrs/rektrs.leads.controller';
+import { RektrsMetaWebhookController } from '@gitroom/backend/rektrs/rektrs.meta.webhook.controller';
 import { RektrsFunctionsGuard } from '@gitroom/backend/rektrs/rektrs.functions.guard';
 
 const rektrsControllers = [
@@ -19,6 +21,7 @@ const rektrsControllers = [
   RektrsReviewController,
   RektrsOrgController,
   RektrsAuditController,
+  RektrsLeadsController,
 ];
 
 /**
@@ -30,7 +33,10 @@ const rektrsControllers = [
  */
 @Module({
   imports: [],
-  controllers: rektrsControllers,
+  // The Meta webhook receiver is registered as a controller but kept OUT
+  // of rektrsControllers on purpose: AuthMiddleware applies only to that
+  // list, and Meta authenticates by HMAC signature, not by session.
+  controllers: [...rektrsControllers, RektrsMetaWebhookController],
   providers: [AuthMiddleware, RektrsFunctionsGuard],
 })
 export class RektrsModule implements NestModule {

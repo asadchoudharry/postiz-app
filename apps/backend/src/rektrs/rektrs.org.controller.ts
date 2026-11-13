@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Patch,
+  Post,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -13,6 +14,7 @@ import { GetOrgFromRequest } from '@gitroom/nestjs-libraries/user/org.from.reque
 import { GetUserFromRequest } from '@gitroom/nestjs-libraries/user/user.from.request';
 import { RektrsRolesService } from '@gitroom/nestjs-libraries/rektrs/rektrs.roles.service';
 import { RektrsAuditService } from '@gitroom/nestjs-libraries/rektrs/rektrs.audit.service';
+import { RektrsLeadsService } from '@gitroom/nestjs-libraries/rektrs/rektrs.leads.service';
 import {
   UpdateMemberFunctionsDto,
   UpdateRektrsOrgSettingsDto,
@@ -28,7 +30,10 @@ import { RealIP } from 'nestjs-real-ip';
 @Controller('/rektrs/v1/org')
 @UseGuards(RektrsFunctionsGuard)
 export class RektrsOrgController {
-  constructor(private _roles: RektrsRolesService) {}
+  constructor(
+    private _roles: RektrsRolesService,
+    private _leads: RektrsLeadsService
+  ) {}
 
   @Patch('/members/:userId/functions')
   @RequireRektrsFunctions('MANAGER')
@@ -60,7 +65,24 @@ export class RektrsOrgController {
     @Body() body: UpdateRektrsOrgSettingsDto,
     @RealIP() ip: string
   ) {
-    return this._roles.updateOrgSettings(org.id, sessionActor(user, ip), body);
+    // W1: the settings UI clears the CRM secret via a flag; translate it to
+    // the service's write-only secret patch (null = clear).
+    const { clearCrmWebhookSecret, ...patch } = body;
+    return this._roles.updateOrgSettings(org.id, sessionActor(user, ip), {
+      ...patch,
+      ...(clearCrmWebhookSecret ? { crmWebhookSecret: null } : {}),
+    });
+  }
+
+  /** W1: fire one signed test ping at the org's configured CRM webhook. */
+  @Post('/crm-webhook/test')
+  @RequireRektrsFunctions('MANAGER')
+  async testCrmWebhook(
+    @GetOrgFromRequest() org: Organization,
+    @GetUserFromRequest() user: User,
+    @RealIP() ip: string
+  ) {
+    return this._leads.testCrmWebhook(org.id, sessionActor(user, ip));
   }
 }
 

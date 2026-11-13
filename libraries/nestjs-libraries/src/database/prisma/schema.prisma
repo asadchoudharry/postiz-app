@@ -49,6 +49,8 @@ model Organization {
   rektrsCampaigns     Campaign[]
   rektrsApprovals     Approval[]
   rektrsSettings      RektrsOrgSettings?
+  rektrsLeadRules     LeadRule[]
+  rektrsLeads         Lead[]
 
   @@index([apiKey])
   @@index([streakSince])
@@ -1913,6 +1915,8 @@ model Brand {
   channels     BrandIntegration[]
   approvals    Approval[]
   pausedPosts  BrandPausedPost[]
+  leadRule     LeadRule?
+  leads        Lead[]
 
   @@unique([organizationId, slug])
   @@index([organizationId])
@@ -2139,6 +2143,14 @@ model RektrsOrgSettings {
   alertEscalationHours    Int     @default(12)
   alertInAppEnabled       Boolean @default(true)
   alertEmailEnabled       Boolean @default(true)
+  // W1 comment-to-DM lead machine (AUTOMATION-WORKFLOWS.md W1): the org's CRM
+  // webhook (Operqon-first, but the endpoint is a setting, never hardcoded).
+  // crmWebhookSecret is write-only through the API — reads expose only
+  // "secret is set". Delivery is HMAC-signed and SSRF-guarded (the codebase's
+  // webhook URL validator + pinned-DNS dispatcher).
+  crmWebhookUrl           String?
+  crmWebhookSecret        String?
+  crmWebhookEnabled       Boolean @default(false)
 
   organization Organization @relation(fields: [organizationId], references: [id])
 
@@ -2158,4 +2170,105 @@ model RektrsIdempotencyKey {
   @@unique([organizationId, key])
   @@index([createdAt])
   @@map("rektrs_idempotency_keys")
+}
+
+// ─── REKTRS W1 — Comment-to-DM Lead Machine (AUTOMATION-WORKFLOWS.md W1) ─────
+// A comment on a brand channel's post containing a configured keyword gets a
+// DM (the brand's template) and becomes a Lead pushed to the org's CRM
+// webhook (RektrsOrgSettings.crmWebhook*). Complaint/guard words short-
+// circuit automation into HUMAN_REVIEW. All tables additive, rektrs_* mapped.
+
+enum RektrsLeadStatus {
+  HUMAN_REVIEW     // guard word hit — no DM, no CRM push; a human owns it
+  DM_PENDING       // keyword lead created; DM attempt not yet resolved
+  DM_SENT          // DM delivered; CRM webhook not yet delivered
+  DM_FAILED        // DM failed at the provider; webhook NOT attempted
+  WEBHOOK_PENDING  // DM sent; CRM delivery failed, retries remain
+  WEBHOOK_FAILED   // DM sent; CRM delivery retries exhausted
+  COMPLETE         // DM sent + CRM delivered (or CRM webhook not configured)
+  HANDLED          // a human marked a HUMAN_REVIEW lead handled
+}
+
+// One automation rule per brand. `guardWords` are the brand's overrides /
+// additions; the org-wide default guard list (service-side constant in
+// rektrs.leads.ts) applies while useDefaultGuardWords is true.
+model LeadRule {
+  id                   String   @id @default(uuid())
+  organizationId       String
+  brandId              String   @unique          // one rule per brand
+  enabled              Boolean  @default(false)
+  keywords             String[] @default([])     // trigger phrases, matched case-insensitively on word boundaries
+  dmTemplate           String   @default("")     // supports {{name}} {{keyword}} {{link}} placeholders
+  guardWords           String[] @default([])
+  useDefaultGuardWords Boolean  @default(true)
+  createdById          String
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  version              Int      @default(1)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  brand        Brand        @relation(fields: [brandId], references: [id])
+  leads        Lead[]
+
+  @@index([organizationId])
+  @@map("rektrs_lead_rules")
+}
+
+model Lead {
+  id                 String           @id @default(uuid())
+  organizationId     String
+  brandId            String
+  ruleId             String
+  integrationId      String                        // the brand channel the comment arrived on
+  providerIdentifier String                        // facebook | instagram (| instagram-standalone, reserved)
+  postId             String?                       // → Post.id when the provider post maps to a local post
+  providerPostId     String                        // provider media/post id (Post.releaseId)
+  commentId          String                        // provider comment id
+  commenterId        String                        // provider user id of the commenter
+  commenterName      String?                       // handle/username as the provider exposes it
+  commentText        String
+  commentAt          DateTime?                     // provider timestamp of the comment
+  matchedKeyword     String?                       // the keyword that fired (null on guard-routed leads)
+  matchedGuardWord   String?                       // the guard word that routed to HUMAN_REVIEW
+  status             RektrsLeadStatus @default(DM_PENDING)
+  dmMessageId        String?
+  dmError            String?
+  dmSentAt           DateTime?
+  webhookAttempts    Int              @default(0)
+  webhookError       String?
+  webhookDeliveredAt DateTime?
+  enrichment         Json?                         // seam: phone/email/etc. a future DM-reply ingestion adds (W6)
+  handledById        String?
+  handledAt          DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  version            Int              @default(1)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  brand        Brand        @relation(fields: [brandId], references: [id])
+  rule         LeadRule     @relation(fields: [ruleId], references: [id])
+
+  // A provider comment is one lead at most (the poller and the webhook
+  // receiver race safely on this), and the per-commenter-per-post DM dedupe
+  // is a partial unique index in the schema step (Prisma cannot express it:
+  // HUMAN_REVIEW rows hold their slot by service rule, not by the index).
+  @@unique([integrationId, commentId])
+  @@index([organizationId])
+  @@index([brandId])
+  @@index([status])
+  @@index([integrationId, providerPostId, commenterId])
+  @@map("rektrs_leads")
+}
+
+// Ingestion dedupe: every provider comment the W1 pipeline has SEEN (matched
+// or not), so the hourly poller and webhook deliveries never reprocess one.
+model LeadCommentSeen {
+  id            String   @id @default(uuid())
+  integrationId String
+  commentId     String
+  createdAt     DateTime @default(now())
+
+  @@unique([integrationId, commentId])
+  @@index([createdAt])
+  @@map("rektrs_lead_comment_seen")
 }

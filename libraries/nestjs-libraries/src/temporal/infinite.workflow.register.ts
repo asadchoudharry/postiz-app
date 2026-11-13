@@ -26,6 +26,16 @@ export class InfiniteWorkflowRegister implements OnModuleInit {
             taskQueue: 'main',
           });
       } catch (err) {}
+      try {
+        // REKTRS W1: the lead-machine driver (hourly comment poll sync +
+        // CRM webhook retry sweep — same duplicate-start contract).
+        await this._temporalService.client
+          ?.getRawClient()
+          ?.workflow?.start('rektrsLeadsWorkflow', {
+            workflowId: 'rektrs-leads-workflow',
+            taskQueue: 'main',
+          });
+      } catch (err) {}
     }
   }
 }

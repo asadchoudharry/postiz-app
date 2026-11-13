@@ -131,6 +131,41 @@ export type PostResponse = {
   pendingData?: any; // Opaque provider state used by checkPostStatus / finalizePost, never inspected by generic code
 };
 
+/**
+ * REKTRS W1 — one comment on a published post, normalised across providers.
+ * Only providers that can READ comments on their own posts and answer a
+ * comment with a private message implement `SocialProviderComments`
+ * (Facebook Page + Instagram today); callers feature-detect the methods.
+ */
+export interface ProviderPostComment {
+  id: string; // provider comment id
+  text: string;
+  commenterId: string; // provider user id of the commenter
+  commenterName?: string; // handle / display name as the provider exposes it
+  createdAt?: string; // ISO timestamp as the provider reports it
+}
+
+export interface SocialProviderComments {
+  /** Newest-first comments on one published post (provider post/media id). */
+  getPostComments(
+    postId: string,
+    accessToken: string,
+    integration: Integration
+  ): Promise<ProviderPostComment[]>;
+
+  /**
+   * The comment-to-DM primitive: send `message` to the author of the given
+   * comment as a private message (Meta "private reply" semantics — the
+   * provider opens the conversation; it is not a public reply).
+   */
+  sendCommentPrivateReply(
+    commentId: string,
+    message: string,
+    accessToken: string,
+    integration: Integration
+  ): Promise<{ messageId?: string }>;
+}
+
 // Returned by checkPostStatus / finalizePost:
 // 'pending' - the platform is still processing, poll again later
 // 'ready' - processing is done, the workflow must call finalizePost to run the remaining mutations

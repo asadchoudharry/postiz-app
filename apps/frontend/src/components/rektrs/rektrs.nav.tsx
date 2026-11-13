@@ -79,6 +79,18 @@ const SubmissionsIcon = (
   </svg>
 );
 
+const LeadsIcon = (
+  <svg {...iconProps}>
+    <path
+      d="M11 3.5 4.5 11.5h4L7.5 17.5l6.5-8h-4l1-6ZM13.5 4.5a5.5 5.5 0 1 1 2 10.6"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
 /**
  * REKTRS Social P3 navigation entries (Brands, Campaigns, Review Inbox,
  * My Submissions) for the main layout menu. Returns an empty list unless
@@ -102,6 +114,19 @@ export const useRektrsMenuItems = (): RektrsMenuItem[] => {
       refreshWhenOffline: false,
     }
   );
+  // W1: the leads badge counts comments waiting for a human (guard-word
+  // queue). Without a lead-viewing function the request fails and, exactly
+  // like the inbox badge, only the badge stays hidden.
+  const { data: humanReview } = useSWR<{ count: number }>(
+    REKTRS_BRAND_ENABLED ? '/rektrs/v1/leads/human-review-count' : null,
+    load,
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      refreshWhenHidden: false,
+      refreshWhenOffline: false,
+    }
+  );
 
   if (!REKTRS_BRAND_ENABLED) {
     return [];
@@ -115,6 +140,12 @@ export const useRektrsMenuItems = (): RektrsMenuItem[] => {
       name: t('campaigns', 'Campaigns'),
       icon: CampaignsIcon,
       path: '/campaigns',
+    },
+    {
+      name: t('rektrs_leads', 'Leads'),
+      icon: LeadsIcon,
+      path: '/leads',
+      badge: humanReview?.count || 0,
     },
     {
       name: t('review_inbox', 'Review inbox'),

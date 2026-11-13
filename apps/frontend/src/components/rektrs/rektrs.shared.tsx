@@ -11,6 +11,7 @@ import {
   RektrsCampaign,
   RektrsFunction,
   RektrsIntegration,
+  RektrsLeadStatus,
   RektrsOrgSettings,
   useRektrsLoader,
 } from '@gitroom/frontend/components/rektrs/rektrs.api';
@@ -149,6 +150,42 @@ export const StateBadge: FC<{ state: RektrsApprovalState }> = ({ state }) => (
     )}
   >
     {STATE_LABELS[state] || state}
+  </span>
+);
+
+/** W1 lead statuses (AUTOMATION-WORKFLOWS.md W1) — honest states only. */
+export const LEAD_STATUS_STYLES: Record<RektrsLeadStatus, string> = {
+  HUMAN_REVIEW: 'bg-red-500/15 text-red-600',
+  DM_PENDING: 'bg-gray-500/15 text-gray-500',
+  DM_SENT: 'bg-blue-500/15 text-blue-600',
+  DM_FAILED: 'bg-red-500/15 text-red-600',
+  WEBHOOK_PENDING: 'bg-amber-500/15 text-amber-600',
+  WEBHOOK_FAILED: 'bg-red-500/15 text-red-600',
+  COMPLETE: 'bg-emerald-500/15 text-emerald-600',
+  HANDLED: 'bg-gray-500/15 text-gray-500',
+};
+
+export const LEAD_STATUS_LABELS: Record<RektrsLeadStatus, string> = {
+  HUMAN_REVIEW: 'Needs a human',
+  DM_PENDING: 'Sending DM…',
+  DM_SENT: 'DM sent',
+  DM_FAILED: 'DM failed',
+  WEBHOOK_PENDING: 'CRM delivery pending',
+  WEBHOOK_FAILED: 'CRM delivery failed',
+  COMPLETE: 'Complete',
+  HANDLED: 'Handled',
+};
+
+export const LeadStatusBadge: FC<{ status: RektrsLeadStatus }> = ({
+  status,
+}) => (
+  <span
+    className={clsx(
+      'inline-flex items-center rounded-full px-[8px] py-[2px] text-[11px] font-[600] whitespace-nowrap',
+      LEAD_STATUS_STYLES[status] || LEAD_STATUS_STYLES.DM_PENDING
+    )}
+  >
+    {LEAD_STATUS_LABELS[status] || status}
   </span>
 );
 

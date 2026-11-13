@@ -185,6 +185,70 @@ export interface RektrsOrgSettings {
   alertEscalationHours: number;
   alertInAppEnabled: boolean;
   alertEmailEnabled: boolean;
+  /** W1 lead machine (AUTOMATION-WORKFLOWS.md W1): the org's CRM webhook.
+   * The signing secret is write-only — reads expose only whether one is
+   * set (crmWebhookSecretSet). */
+  crmWebhookUrl: string | null;
+  crmWebhookEnabled: boolean;
+  crmWebhookSecretSet: boolean;
+}
+
+/** W1: the per-brand comment-to-DM automation rule. */
+export interface RektrsLeadRule {
+  brandId: string;
+  enabled: boolean;
+  keywords: string[];
+  dmTemplate: string;
+  guardWords: string[];
+  useDefaultGuardWords: boolean;
+  version: number | null;
+}
+
+export type RektrsLeadStatus =
+  | 'HUMAN_REVIEW'
+  | 'DM_PENDING'
+  | 'DM_SENT'
+  | 'DM_FAILED'
+  | 'WEBHOOK_PENDING'
+  | 'WEBHOOK_FAILED'
+  | 'COMPLETE'
+  | 'HANDLED';
+
+export interface RektrsLead {
+  id: string;
+  organizationId: string;
+  brandId: string;
+  ruleId: string;
+  integrationId: string;
+  providerIdentifier: string;
+  postId: string | null;
+  providerPostId: string;
+  commentId: string;
+  commenterId: string;
+  commenterName: string | null;
+  commentText: string;
+  commentAt: string | null;
+  matchedKeyword: string | null;
+  matchedGuardWord: string | null;
+  status: RektrsLeadStatus;
+  dmMessageId: string | null;
+  dmError: string | null;
+  dmSentAt: string | null;
+  webhookAttempts: number;
+  webhookError: string | null;
+  webhookDeliveredAt: string | null;
+  handledById: string | null;
+  handledAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  version: number;
+}
+
+/** Result of POST /rektrs/v1/org/crm-webhook/test (W1). */
+export interface RektrsCrmWebhookTestResult {
+  ok: boolean;
+  status?: number;
+  error?: string;
 }
 
 /** Result of POST /rektrs/v1/brands/:id/pause (W5). */
@@ -255,6 +319,17 @@ const READABLE_BY_CODE: Record<string, string> = {
     'The approval for this content has expired and needs a fresh review.',
   BRAND_PAUSED:
     'This brand is paused (crisis kill-switch). Its posts cannot be scheduled or published until a manager resumes the brand.',
+  CRM_WEBHOOK_URL_UNSAFE:
+    'The CRM webhook URL must be a public HTTPS address — internal or non-HTTPS URLs are not allowed.',
+  CRM_WEBHOOK_SECRET_TOO_SHORT:
+    'The CRM webhook signing secret must be at least 16 characters.',
+  CRM_WEBHOOK_NOT_CONFIGURED:
+    'Save a CRM webhook URL first, then send a test ping.',
+  LEAD_RULE_KEYWORDS_REQUIRED:
+    'Add at least one keyword before enabling the lead machine.',
+  LEAD_RULE_TEMPLATE_REQUIRED:
+    'Write the DM template before enabling the lead machine.',
+  LEAD_NOT_ACTIONABLE: 'This lead cannot be changed in its current state.',
 };
 
 export const readableRektrsError = (error: unknown, fallback: string) => {

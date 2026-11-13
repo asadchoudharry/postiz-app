@@ -4,6 +4,7 @@ import {
   PendingCheckResponse,
   PostDetails,
   PostResponse,
+  ProviderPostComment,
   SocialProvider,
 } from '@gitroom/nestjs-libraries/integrations/social/social.integrations.interface';
 import { makeSecureId } from '@gitroom/nestjs-libraries/services/make.secure.id';
@@ -1024,6 +1025,72 @@ export class FacebookProvider extends SocialAbstract implements SocialProvider {
         status: 'success',
       },
     ];
+  }
+
+  /**
+   * REKTRS W1 (SocialProviderComments): newest-first comments on one
+   * published Page post. Comment replies are included by the Graph API in
+   * the same edge; the caller dedupes by comment id.
+   */
+  async getPostComments(
+    postId: string,
+    accessToken: string,
+    integration: Integration
+  ): Promise<ProviderPostComment[]> {
+    const { data, error } = await (
+      await this.fetch(
+        `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${postId}/comments?fields=id,message,from{id,name},created_time&order=reverse_chronological&limit=100`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+        'get post comments'
+      )
+    ).json();
+
+    if (error) {
+      throw new Error(error.message || 'Facebook comments fetch failed');
+    }
+
+    return (data || []).map((c: any) => ({
+      id: String(c.id),
+      text: c.message || '',
+      commenterId: String(c.from?.id || ''),
+      commenterName: c.from?.name || undefined,
+      createdAt: c.created_time || undefined,
+    }));
+  }
+
+  /**
+   * REKTRS W1 (SocialProviderComments): Meta private reply — sends
+   * `message` to the comment's author as a private message (the page opens
+   * a Messenger conversation; nothing is posted publicly). One private
+   * reply per comment is a platform rule, which is exactly the W1
+   * once-per-commenter guarantee's provider-side twin.
+   */
+  async sendCommentPrivateReply(
+    commentId: string,
+    message: string,
+    accessToken: string,
+    integration: Integration
+  ): Promise<{ messageId?: string }> {
+    const data = await (
+      await this.fetch(
+        `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${commentId}/private_replies`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ message }),
+        },
+        'send private reply'
+      )
+    ).json();
+
+    if (data?.error) {
+      throw new Error(data.error.message || 'Facebook private reply failed');
+    }
+
+    return { messageId: data?.id ? String(data.id) : undefined };
   }
 
   async analytics(

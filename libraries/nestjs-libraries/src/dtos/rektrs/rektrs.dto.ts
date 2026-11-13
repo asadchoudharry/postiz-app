@@ -1,4 +1,6 @@
+import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsDefined,
@@ -8,7 +10,9 @@ import {
   IsOptional,
   IsString,
   Max,
+  MaxLength,
   Min,
+  ValidateIf,
 } from 'class-validator';
 
 export class CreateBrandDto {
@@ -233,6 +237,93 @@ export class UpdateRektrsOrgSettingsDto {
   @IsOptional()
   @IsBoolean()
   alertEmailEnabled?: boolean;
+
+  // W1 — CRM webhook (Operqon-first; the endpoint is an org setting, never
+  // hardcoded). URL safety (public HTTPS) is enforced in the service via
+  // isSafePublicHttpsUrl; the secret is write-only (min length in service).
+  @IsOptional()
+  @ValidateIf((o) => o.crmWebhookUrl !== null)
+  @IsString()
+  @MaxLength(2048)
+  crmWebhookUrl?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  crmWebhookEnabled?: boolean;
+
+  @IsOptional()
+  @ValidateIf((o) => o.crmWebhookSecret !== null)
+  @IsString()
+  @MaxLength(512)
+  crmWebhookSecret?: string | null;
+
+  /** Convenience for the settings UI: clear the stored secret. */
+  @IsOptional()
+  @IsBoolean()
+  clearCrmWebhookSecret?: boolean;
+}
+
+/**
+ * W1 — the per-brand lead automation rule (AUTOMATION-WORKFLOWS.md W1).
+ * keywords/guardWords are phrase lists (normalised server-side); the DM
+ * template supports {{name}} / {{keyword}} / {{link}} placeholders.
+ */
+export class UpdateLeadRuleDto {
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  @MaxLength(100, { each: true })
+  keywords?: string[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  dmTemplate?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  @MaxLength(100, { each: true })
+  guardWords?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  useDefaultGuardWords?: boolean;
+}
+
+export const REKTRS_LEAD_STATUSES = [
+  'HUMAN_REVIEW',
+  'DM_PENDING',
+  'DM_SENT',
+  'DM_FAILED',
+  'WEBHOOK_PENDING',
+  'WEBHOOK_FAILED',
+  'COMPLETE',
+  'HANDLED',
+] as const;
+
+export class ListLeadsQueryDto {
+  @IsOptional()
+  @IsIn(REKTRS_LEAD_STATUSES as unknown as string[])
+  status?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  brandId?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  take?: number;
 }
 
 export class PauseBrandDto {

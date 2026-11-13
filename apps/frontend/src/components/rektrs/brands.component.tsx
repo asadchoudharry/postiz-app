@@ -2,7 +2,7 @@
 
 import { FC, useCallback, useEffect, useMemo, useState } from 'react';
 import { FormProvider, useForm, useFormContext } from 'react-hook-form';
-import { useSWRConfig } from 'swr';
+import useSWR, { useSWRConfig } from 'swr';
 import { Button } from '@gitroom/react/form/button';
 import { Input } from '@gitroom/react/form/input';
 import { Checkbox } from '@gitroom/react/form/checkbox';
@@ -16,8 +16,11 @@ import {
   RektrsBrand,
   RektrsBrandPauseResult,
   RektrsBrandResumeResult,
+  RektrsCrmWebhookTestResult,
+  RektrsLeadRule,
   slugifyClient,
   useRektrsCall,
+  useRektrsLoader,
 } from '@gitroom/frontend/components/rektrs/rektrs.api';
 import {
   BrandDot,
@@ -356,6 +359,196 @@ interface BrandFormValues {
   approvalRequired: boolean;
 }
 
+/**
+ * W1 — the brand's Comment-to-DM lead machine settings
+ * (AUTOMATION-WORKFLOWS.md W1). Lives inside the brand edit modal next to
+ * channels + kill-switch; the org-wide CRM endpoint it delivers to is set
+ * in the OrgPolicyCard below. MANAGER configures; everyone else reads.
+ */
+const splitLeadList = (value: string) =>
+  value
+    .split(/[,\n]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+const BrandLeadAutomation: FC<{ brand: RektrsBrand }> = ({ brand }) => {
+  const t = useT();
+  const call = useRektrsCall();
+  const load = useRektrsLoader();
+  const toaster = useToaster();
+  const canManage = useHasRektrsFunction('MANAGER');
+  const { data: rule, mutate } = useSWR<RektrsLeadRule>(
+    `/rektrs/v1/brands/${brand.id}/lead-rule`,
+    load,
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      refreshWhenHidden: false,
+      refreshWhenOffline: false,
+    }
+  );
+  const [enabled, setEnabled] = useState(false);
+  const [keywords, setKeywords] = useState('');
+  const [template, setTemplate] = useState('');
+  const [guardWords, setGuardWords] = useState('');
+  const [useDefaults, setUseDefaults] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (rule) {
+      setEnabled(rule.enabled);
+      setKeywords(rule.keywords.join(', '));
+      setTemplate(rule.dmTemplate);
+      setGuardWords(rule.guardWords.join(', '));
+      setUseDefaults(rule.useDefaultGuardWords);
+    }
+  }, [rule]);
+
+  const save = useCallback(async () => {
+    setSaving(true);
+    setError('');
+    try {
+      await call(`/rektrs/v1/brands/${brand.id}/lead-rule`, {
+        method: 'PUT',
+        ifMatch: rule?.version ?? undefined,
+        body: {
+          enabled,
+          keywords: splitLeadList(keywords),
+          dmTemplate: template,
+          guardWords: splitLeadList(guardWords),
+          useDefaultGuardWords: useDefaults,
+        },
+      });
+      await mutate();
+      toaster.show(
+        t('rektrs_lead_rule_saved', 'Lead automation saved'),
+        'success'
+      );
+    } catch (e) {
+      setError(
+        readableRektrsError(
+          e,
+          t('rektrs_lead_rule_save_failed', 'Could not save the lead automation')
+        )
+      );
+    } finally {
+      setSaving(false);
+    }
+  }, [brand.id, call, enabled, guardWords, keywords, mutate, rule?.version, t, template, toaster, useDefaults]);
+
+  if (!rule) {
+    return null;
+  }
+
+  const fieldLabel = 'text-[14px] font-[500]';
+  const fieldHint = 'text-[12px] opacity-60';
+  const inputCls =
+    'bg-newBgColorInner border border-newTableBorder rounded-[8px] px-[16px] py-[10px] text-[14px] outline-none w-full disabled:opacity-50';
+
+  return (
+    <div className="flex flex-col gap-[10px]">
+      <div className="flex items-start justify-between gap-[16px]">
+        <div className="flex flex-col gap-[2px]">
+          <div className="text-[14px] font-[600]">
+            {t('rektrs_lead_automation', 'Lead automation (comment → DM)')}
+          </div>
+          <div className="text-[12px] opacity-60 max-w-[520px]">
+            {t(
+              'rektrs_lead_automation_hint',
+              'When a comment on this brand’s Facebook or Instagram posts contains a keyword, the commenter gets a private DM and the lead is pushed to your CRM webhook (set under Organization approval policy). At most one DM per person per post.'
+            )}
+          </div>
+        </div>
+        <button
+          type="button"
+          disabled={!canManage}
+          onClick={() => setEnabled(!enabled)}
+          className={clsx(
+            'relative w-[42px] h-[24px] rounded-full shrink-0 transition-colors',
+            enabled ? 'bg-[#612bd3]' : 'bg-gray-400/40',
+            !canManage && 'opacity-50 cursor-not-allowed'
+          )}
+          aria-pressed={enabled}
+        >
+          <span
+            className={clsx(
+              'absolute top-[3px] w-[18px] h-[18px] rounded-full bg-white transition-all',
+              enabled ? 'start-[21px]' : 'start-[3px]'
+            )}
+          />
+        </button>
+      </div>
+      <div className="flex flex-col gap-[6px]">
+        <div className={fieldLabel}>
+          {t('rektrs_lead_keywords', 'Keywords (comma separated)')}
+        </div>
+        <input
+          className={inputCls}
+          disabled={!canManage}
+          value={keywords}
+          onChange={(e) => setKeywords(e.target.value)}
+          placeholder="price, order, booking"
+        />
+      </div>
+      <div className="flex flex-col gap-[6px]">
+        <div className={fieldLabel}>
+          {t('rektrs_lead_dm_template', 'DM template')}
+        </div>
+        <textarea
+          className={inputCls}
+          disabled={!canManage}
+          rows={3}
+          value={template}
+          onChange={(e) => setTemplate(e.target.value)}
+          placeholder="Hi {{name}}! Thanks for asking about {{keyword}} — details here: {{link}}"
+        />
+        <div className={fieldHint}>
+          {t(
+            'rektrs_lead_dm_template_hint',
+            'Placeholders: {{name}} the commenter, {{keyword}} what matched, {{link}} the post link.'
+          )}
+        </div>
+      </div>
+      <div className="flex flex-col gap-[6px]">
+        <div className={fieldLabel}>
+          {t('rektrs_lead_guard_words', 'Extra guard words (comma separated)')}
+        </div>
+        <input
+          className={inputCls}
+          disabled={!canManage}
+          value={guardWords}
+          onChange={(e) => setGuardWords(e.target.value)}
+          placeholder=""
+        />
+        <div className={fieldHint}>
+          {t(
+            'rektrs_lead_guard_words_hint',
+            'A comment matching a guard word is never auto-DMed — it goes to the human-review queue in Leads instead. Built-in defaults (refund, complaint, scam, fraud, lawyer, police + Urdu/Arabic equivalents) always apply unless you turn them off below.'
+          )}
+        </div>
+        <label className="flex items-center gap-[8px] text-[13px] cursor-pointer w-fit">
+          <input
+            type="checkbox"
+            disabled={!canManage}
+            checked={useDefaults}
+            onChange={(e) => setUseDefaults(e.target.checked)}
+          />
+          {t('rektrs_lead_use_default_guards', 'Use the built-in guard words')}
+        </label>
+      </div>
+      {error ? <div className="text-red-400 text-[13px]">{error}</div> : null}
+      {canManage ? (
+        <div className="flex justify-end">
+          <Button type="button" secondary loading={saving} onClick={save}>
+            {t('rektrs_lead_rule_save', 'Save lead automation')}
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
 const BrandFormModal: FC<{
   brand: RektrsBrand | null;
   onSaved: () => void;
@@ -542,6 +735,7 @@ const BrandFormModal: FC<{
             <BrandKillSwitch brand={liveBrand} />
           </div>
           <BrandChannels brand={liveBrand} />
+          <BrandLeadAutomation brand={liveBrand} />
         </div>
       ) : null}
     </div>
@@ -610,6 +804,50 @@ const OrgPolicyCard: FC = () => {
       alertEscalationHours: escalation,
     });
   }, [reminderHours, escalationHours, patch, t, toaster]);
+
+  // W1 CRM webhook knobs (URL saved explicitly; secret is write-only — the
+  // field starts empty and only sends when the manager types a new one).
+  const [crmUrl, setCrmUrl] = useState('');
+  const [crmSecret, setCrmSecret] = useState('');
+  const [crmTest, setCrmTest] = useState<RektrsCrmWebhookTestResult | null>(
+    null
+  );
+  const [crmTesting, setCrmTesting] = useState(false);
+  useEffect(() => {
+    if (settings) {
+      setCrmUrl(settings.crmWebhookUrl || '');
+    }
+  }, [settings?.crmWebhookUrl]);
+
+  const saveCrm = useCallback(async () => {
+    await patch({
+      crmWebhookUrl: crmUrl.trim() || null,
+      ...(crmSecret ? { crmWebhookSecret: crmSecret } : {}),
+    });
+    setCrmSecret('');
+  }, [crmUrl, crmSecret, patch]);
+
+  const testCrm = useCallback(async () => {
+    setCrmTesting(true);
+    setCrmTest(null);
+    try {
+      const result = await call<RektrsCrmWebhookTestResult>(
+        '/rektrs/v1/org/crm-webhook/test',
+        { method: 'POST' }
+      );
+      setCrmTest(result);
+    } catch (e) {
+      setCrmTest({
+        ok: false,
+        error: readableRektrsError(
+          e,
+          t('rektrs_crm_test_failed', 'The test ping could not be sent')
+        ),
+      });
+    } finally {
+      setCrmTesting(false);
+    }
+  }, [call, t]);
 
   if (!settings) {
     return null;
@@ -745,6 +983,110 @@ const OrgPolicyCard: FC = () => {
           value={settings.alertEmailEnabled ?? true}
           onChange={(v) => patch({ alertEmailEnabled: v })}
         />
+      </div>
+      <div className="border-t border-newTableBorder mt-[10px] pt-[12px]">
+        <div className="text-[15px] font-[600] mb-[2px]">
+          {t('rektrs_crm_webhook_title', 'Lead delivery (CRM webhook)')}
+        </div>
+        <div className="text-[12px] opacity-60 max-w-[520px]">
+          {t(
+            'rektrs_crm_webhook_hint',
+            'New leads from the comment-to-DM automation are pushed to this endpoint (Operqon or any CRM) as signed webhooks. Delivery is retried automatically; failures stay visible in Leads.'
+          )}
+        </div>
+        <Toggle
+          label={t('rektrs_crm_webhook_enabled', 'Send leads to the CRM webhook')}
+          hint={t(
+            'rektrs_crm_webhook_enabled_hint',
+            'When off, leads are still captured and DMs still sent — only the CRM push is paused.'
+          )}
+          value={settings.crmWebhookEnabled ?? false}
+          onChange={(v) => patch({ crmWebhookEnabled: v })}
+        />
+        <div className="flex flex-col gap-[6px] py-[8px]">
+          <div className="text-[14px]">
+            {t('rektrs_crm_webhook_url', 'Webhook URL (HTTPS)')}
+          </div>
+          <div className="bg-newBgColorInner border-newTableBorder border rounded-[8px] flex items-center max-w-[520px]">
+            <input
+              type="url"
+              disabled={!canManage || busy}
+              value={crmUrl}
+              onChange={(e) => setCrmUrl(e.target.value)}
+              placeholder="https://crm.example.com/hooks/rektrs-leads"
+              className="h-[42px] bg-transparent outline-none flex-1 text-[14px] px-[16px] w-full"
+            />
+          </div>
+        </div>
+        <div className="flex flex-col gap-[6px] py-[8px]">
+          <div className="text-[14px]">
+            {t('rektrs_crm_webhook_secret', 'Signing secret')}
+          </div>
+          <div className="flex items-center gap-[12px]">
+            <div className="bg-newBgColorInner border-newTableBorder border rounded-[8px] flex items-center w-[320px]">
+              <input
+                type="password"
+                autoComplete="new-password"
+                disabled={!canManage || busy}
+                value={crmSecret}
+                onChange={(e) => setCrmSecret(e.target.value)}
+                placeholder={
+                  settings.crmWebhookSecretSet
+                    ? t('rektrs_crm_secret_set_placeholder', 'A secret is set — type to replace it')
+                    : t('rektrs_crm_secret_unset_placeholder', 'No secret set yet')
+                }
+                className="h-[42px] bg-transparent outline-none flex-1 text-[14px] px-[16px] w-full"
+              />
+            </div>
+            {settings.crmWebhookSecretSet ? (
+              <span className="inline-flex rounded-full bg-emerald-500/15 text-emerald-600 px-[8px] py-[2px] text-[11px] font-[600]">
+                {t('rektrs_crm_secret_set', 'Secret set')}
+              </span>
+            ) : null}
+            {canManage && settings.crmWebhookSecretSet ? (
+              <button
+                type="button"
+                className="text-[12px] opacity-60 hover:opacity-100"
+                disabled={busy}
+                onClick={() => patch({ clearCrmWebhookSecret: true })}
+              >
+                {t('rektrs_crm_secret_clear', 'Clear secret')}
+              </button>
+            ) : null}
+          </div>
+          <div className="text-[12px] opacity-60 max-w-[520px]">
+            {t(
+              'rektrs_crm_secret_hint',
+              'The secret never leaves the server — it signs each delivery (X-Rektrs-Signature) so your CRM can verify the lead really came from REKTRS Social.'
+            )}
+          </div>
+        </div>
+        {canManage ? (
+          <div className="flex flex-wrap gap-[10px] py-[8px]">
+            <Button type="button" secondary loading={busy} onClick={saveCrm}>
+              {t('rektrs_crm_save', 'Save CRM webhook')}
+            </Button>
+            <Button type="button" secondary loading={crmTesting} onClick={testCrm}>
+              {t('rektrs_crm_test', 'Send test ping')}
+            </Button>
+            {crmTest ? (
+              <span
+                className={clsx(
+                  'inline-flex items-center rounded-full px-[10px] py-[3px] text-[12px] font-[600]',
+                  crmTest.ok
+                    ? 'bg-emerald-500/15 text-emerald-600'
+                    : 'bg-red-500/15 text-red-500'
+                )}
+              >
+                {crmTest.ok
+                  ? `${t('rektrs_crm_test_ok', 'Delivered')} · HTTP ${crmTest.status}`
+                  : `${t('rektrs_crm_test_not_ok', 'Not delivered')}${
+                      crmTest.status ? ` · HTTP ${crmTest.status}` : ''
+                    }${crmTest.error ? ` · ${crmTest.error}` : ''}`}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </div>
       {!canManage ? (
         <div className="text-[12px] opacity-60 mt-[4px]">

@@ -45,7 +45,12 @@ export interface RektrsAlertMessage {
     | 'REMINDER'
     | 'ESCALATION'
     | 'BRAND_PAUSED'
-    | 'BRAND_RESUMED';
+    | 'BRAND_RESUMED'
+    // W1 lead machine — fired through this same channel interface; the
+    // WhatsApp leg remains the documented no-op stub until a provider is
+    // connected (AUTOMATION-WORKFLOWS.md W1/W2).
+    | 'LEAD_CREATED'
+    | 'LEAD_HUMAN_REVIEW';
   subject: string;
   /** Plain-text body; always ends with the deep link. */
   body: string;
@@ -332,6 +337,45 @@ export class RektrsAlertsService {
       link,
       recipients,
       respectChannelSettings: false,
+    });
+  }
+
+  // ── W1 lead notices ───────────────────────────────────────────────────────
+  /**
+   * A new lead landed (or a guard-routed comment needs a human). Recipients:
+   * the org's MANAGERs. Honours the org channel toggles like the W2 chain —
+   * a lead alert is operational, not a crisis notice.
+   */
+  async alertNewLead(
+    orgId: string,
+    lead: {
+      id: string;
+      brandId: string;
+      commenterName?: string | null;
+      matchedKeyword?: string | null;
+      matchedGuardWord?: string | null;
+      humanReview: boolean;
+    }
+  ) {
+    const recipients = await this.membersWithFunction(orgId, 'MANAGER');
+    if (!recipients.length) {
+      return;
+    }
+    const brand = await this.brandName(orgId, lead.brandId);
+    const link = this.link('/leads');
+    const who = lead.commenterName || 'A commenter';
+    await this.fanOut({
+      orgId,
+      kind: lead.humanReview ? 'LEAD_HUMAN_REVIEW' : 'LEAD_CREATED',
+      subject: lead.humanReview
+        ? `Comment needs a human: ${brand}`
+        : `New lead: ${brand}`,
+      body: lead.humanReview
+        ? `${who}'s comment on ${brand} matched the guard word "${lead.matchedGuardWord}" and was routed to the human-review queue — no DM was sent. Open the queue: ${link}`
+        : `${who}'s comment on ${brand} matched "${lead.matchedKeyword}". A DM was sent and the lead is on its way to your CRM. Open leads: ${link}`,
+      link,
+      recipients,
+      respectChannelSettings: true,
     });
   }
 

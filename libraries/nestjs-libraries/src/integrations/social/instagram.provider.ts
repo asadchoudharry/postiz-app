@@ -4,6 +4,7 @@ import {
   PendingCheckResponse,
   PostDetails,
   PostResponse,
+  ProviderPostComment,
   SocialProvider,
 } from '@gitroom/nestjs-libraries/integrations/social/social.integrations.interface';
 import { makeSecureId } from '@gitroom/nestjs-libraries/services/make.secure.id';
@@ -1134,6 +1135,80 @@ export class InstagramProvider
         status: 'success',
       },
     ];
+  }
+
+  /**
+   * REKTRS W1 (SocialProviderComments): newest-first comments on one
+   * published media. `type` mirrors comment()'s host switch (graph.facebook
+   * .com for FB-Login accounts, graph.instagram.com for IG-Login ones).
+   */
+  async getPostComments(
+    postId: string,
+    accessToken: string,
+    integration: Integration,
+    type = 'graph.facebook.com'
+  ): Promise<ProviderPostComment[]> {
+    const [primaryToken] = accessToken.split('___');
+
+    const { data, error } = await (
+      await this.fetch(
+        `https://${type}/${META_GRAPH_API_VERSION}/${postId}/comments?fields=id,text,username,timestamp,from{id,username}`,
+        { headers: { Authorization: `Bearer ${primaryToken}` } },
+        'get post comments'
+      )
+    ).json();
+
+    if (error) {
+      throw new Error(error.message || 'Instagram comments fetch failed');
+    }
+
+    return (data || []).map((c: any) => ({
+      id: String(c.id),
+      text: c.text || '',
+      commenterId: String(c.from?.id || ''),
+      commenterName: c.from?.username || c.username || undefined,
+      createdAt: c.timestamp || undefined,
+    }));
+  }
+
+  /**
+   * REKTRS W1 (SocialProviderComments): private reply to a comment via the
+   * Instagram messaging endpoint — the message lands in the commenter's DM
+   * inbox (Send API with a comment_id recipient), nothing is posted
+   * publicly. Meta allows one private reply per comment.
+   */
+  async sendCommentPrivateReply(
+    commentId: string,
+    message: string,
+    accessToken: string,
+    integration: Integration,
+    type = 'graph.facebook.com'
+  ): Promise<{ messageId?: string }> {
+    const [primaryToken] = accessToken.split('___');
+
+    const data = await (
+      await this.fetch(
+        `https://${type}/${META_GRAPH_API_VERSION}/${integration.internalId}/messages`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${primaryToken}`,
+          },
+          body: JSON.stringify({
+            recipient: { comment_id: commentId },
+            message: { text: message },
+          }),
+        },
+        'send private reply'
+      )
+    ).json();
+
+    if (data?.error) {
+      throw new Error(data.error.message || 'Instagram private reply failed');
+    }
+
+    return { messageId: data?.message_id ? String(data.message_id) : undefined };
   }
 
   private setTitle(name: string) {

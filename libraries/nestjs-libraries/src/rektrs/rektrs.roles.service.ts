@@ -8,6 +8,7 @@ import { RektrsRepository } from './rektrs.repository';
 import { RektrsAuditService } from './rektrs.audit.service';
 import { RektrsActor } from './rektrs.actor';
 import { rektrsError } from './rektrs.errors';
+import { isSafePublicHttpsUrl } from '@gitroom/nestjs-libraries/dtos/webhooks/webhook.url.validator';
 
 export interface RektrsOrgSettingsView {
   approvalRequiredDefault: boolean;
@@ -19,6 +20,12 @@ export interface RektrsOrgSettingsView {
   alertEscalationHours: number;
   alertInAppEnabled: boolean;
   alertEmailEnabled: boolean;
+  // W1 lead machine (AUTOMATION-WORKFLOWS.md W1): the CRM webhook the org's
+  // leads are pushed to. The signing secret is WRITE-ONLY: reads expose
+  // only whether one is set (crmWebhookSecretSet).
+  crmWebhookUrl: string | null;
+  crmWebhookEnabled: boolean;
+  crmWebhookSecretSet: boolean;
 }
 
 export const REKTRS_SETTINGS_DEFAULTS: RektrsOrgSettingsView = {
@@ -30,7 +37,16 @@ export const REKTRS_SETTINGS_DEFAULTS: RektrsOrgSettingsView = {
   alertEscalationHours: 12,
   alertInAppEnabled: true,
   alertEmailEnabled: true,
+  crmWebhookUrl: null,
+  crmWebhookEnabled: false,
+  crmWebhookSecretSet: false,
 };
+
+/** Settings patch as accepted from the API: the view fields plus the
+ *  write-only CRM secret (a string sets it, null clears it). */
+export interface RektrsOrgSettingsPatch extends Partial<RektrsOrgSettingsView> {
+  crmWebhookSecret?: string | null;
+}
 
 /**
  * REKTRS P3 — functional-role resolution + org policy settings (design §5).
@@ -138,6 +154,25 @@ export class RektrsRolesService {
         row.alertInAppEnabled ?? REKTRS_SETTINGS_DEFAULTS.alertInAppEnabled,
       alertEmailEnabled:
         row.alertEmailEnabled ?? REKTRS_SETTINGS_DEFAULTS.alertEmailEnabled,
+      // W1 columns (schema-step-w1.sql) — same belt-and-braces treatment.
+      crmWebhookUrl: row.crmWebhookUrl ?? null,
+      crmWebhookEnabled:
+        row.crmWebhookEnabled ?? REKTRS_SETTINGS_DEFAULTS.crmWebhookEnabled,
+      crmWebhookSecretSet: !!row.crmWebhookSecret,
+    };
+  }
+
+  /**
+   * W1 server-side read of the CRM webhook config INCLUDING the signing
+   * secret. Internal only — this shape must never reach an API response
+   * (the public view above carries crmWebhookSecretSet instead).
+   */
+  async getCrmWebhookConfig(orgId: string) {
+    const row = await this._repository.orgSettings(orgId);
+    return {
+      url: row?.crmWebhookUrl ?? null,
+      secret: row?.crmWebhookSecret ?? null,
+      enabled: row?.crmWebhookEnabled ?? false,
     };
   }
 
@@ -145,15 +180,52 @@ export class RektrsRolesService {
   async updateOrgSettings(
     orgId: string,
     actor: RektrsActor,
-    patch: Partial<RektrsOrgSettingsView>
+    patch: RektrsOrgSettingsPatch
   ) {
+    // W1: the CRM secret is write-only — split it out so it can never land
+    // in the settings view or in audit metadata.
+    const { crmWebhookSecret, ...viewPatch } = patch;
+    const secretTouched = crmWebhookSecret !== undefined;
+    if (secretTouched && crmWebhookSecret) {
+      if (crmWebhookSecret.length < 16) {
+        throw rektrsError.unprocessable(
+          'CRM_WEBHOOK_SECRET_TOO_SHORT',
+          'The CRM webhook signing secret must be at least 16 characters'
+        );
+      }
+    }
+    if (viewPatch.crmWebhookUrl) {
+      // Reuse the platform's SSRF guard: leads carry commenter PII, so the
+      // endpoint must be a public HTTPS URL, never an internal address.
+      if (!(await isSafePublicHttpsUrl(viewPatch.crmWebhookUrl))) {
+        throw rektrsError.unprocessable(
+          'CRM_WEBHOOK_URL_UNSAFE',
+          'The CRM webhook URL must be a public HTTPS URL'
+        );
+      }
+    }
     const before = await this.getOrgSettings(orgId);
-    const after = { ...before, ...patch };
+    const after: RektrsOrgSettingsView = { ...before, ...viewPatch };
+    if (secretTouched) {
+      after.crmWebhookSecretSet = !!crmWebhookSecret;
+    }
+    // Only real columns may reach Prisma: the view's crmWebhookSecretSet is
+    // derived, and the secret itself is set explicitly when touched.
+    const { crmWebhookSecretSet: _derived, ...columnView } = after;
+    const columnPatch: Record<string, unknown> = { ...viewPatch };
+    delete columnPatch.crmWebhookSecretSet;
+    if (secretTouched) {
+      columnPatch.crmWebhookSecret = crmWebhookSecret;
+    }
     return this._repository.transaction(async (tx) => {
       await this._repository.db(tx).rektrsOrgSettings.upsert({
         where: { organizationId: orgId },
-        create: { organizationId: orgId, ...after },
-        update: { ...patch },
+        create: {
+          organizationId: orgId,
+          ...columnView,
+          crmWebhookSecret: secretTouched ? crmWebhookSecret : null,
+        },
+        update: { ...columnPatch },
       });
       await this._audit.write(
         orgId,
@@ -162,7 +234,11 @@ export class RektrsRolesService {
           action: 'org.settings',
           entityType: 'Policy',
           entityId: orgId,
-          metadata: { before, after },
+          metadata: {
+            before,
+            after,
+            ...(secretTouched ? { crmWebhookSecretChanged: true } : {}),
+          },
         },
         tx
       );

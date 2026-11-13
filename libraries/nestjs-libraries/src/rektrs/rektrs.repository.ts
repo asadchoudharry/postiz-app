@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, RektrsApprovalState } from '@prisma/client';
+import { Prisma, RektrsApprovalState, RektrsLeadStatus } from '@prisma/client';
 import { PrismaService } from '@gitroom/nestjs-libraries/database/prisma/prisma.service';
 
 export type RektrsDb = PrismaService | Prisma.TransactionClient;
@@ -300,6 +300,115 @@ export class RektrsRepository {
     return this.db(tx).brandPausedPost.findMany({
       where: { brandId },
       orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  // ── W1 lead machine ───────────────────────────────────────────────────────
+  leadRuleByBrand(orgId: string, brandId: string, tx?: RektrsDb) {
+    return this.db(tx).leadRule.findFirst({
+      where: { brandId, organizationId: orgId },
+    });
+  }
+
+  /** All enabled rules with their brand channels — the poller's work list. */
+  enabledLeadRules(tx?: RektrsDb) {
+    return this.db(tx).leadRule.findMany({
+      where: { enabled: true },
+      include: {
+        brand: {
+          include: { channels: { include: { integration: true } } },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  leadById(orgId: string, id: string, tx?: RektrsDb) {
+    return this.db(tx).lead.findFirst({
+      where: { id, organizationId: orgId },
+    });
+  }
+
+  leadsOfOrg(
+    orgId: string,
+    filters: { status?: RektrsLeadStatus; brandId?: string; take?: number },
+    tx?: RektrsDb
+  ) {
+    return this.db(tx).lead.findMany({
+      where: {
+        organizationId: orgId,
+        ...(filters.status ? { status: filters.status } : {}),
+        ...(filters.brandId ? { brandId: filters.brandId } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(Math.max(filters.take || 100, 1), 200),
+    });
+  }
+
+  /** Any lead (automated or human-routed) for the per-post dedupe check. */
+  leadForCommenterPost(
+    ruleId: string,
+    providerPostId: string,
+    commenterId: string,
+    tx?: RektrsDb
+  ) {
+    return this.db(tx).lead.findFirst({
+      where: { ruleId, providerPostId, commenterId },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  /**
+   * Leads whose CRM webhook still owes a delivery: DM_SENT means the DM
+   * landed but the webhook was never attempted (crash window), WEBHOOK_
+   * PENDING means attempts remain. Cross-org BY DESIGN (system sweep);
+   * delivery re-reads each row's own org settings.
+   */
+  leadsAwaitingWebhook(maxAttempts: number, tx?: RektrsDb) {
+    return this.db(tx).lead.findMany({
+      where: {
+        status: { in: ['DM_SENT', 'WEBHOOK_PENDING'] },
+        webhookAttempts: { lt: maxAttempts },
+      },
+      orderBy: { updatedAt: 'asc' },
+      take: 100,
+    });
+  }
+
+  /** Recently published, provider-mapped root posts of the given channels. */
+  publishedPostsForChannels(
+    orgId: string,
+    integrationIds: string[],
+    since: Date,
+    tx?: RektrsDb
+  ) {
+    if (!integrationIds.length) {
+      return Promise.resolve([]);
+    }
+    return this.db(tx).post.findMany({
+      where: {
+        organizationId: orgId,
+        integrationId: { in: integrationIds },
+        state: 'PUBLISHED',
+        parentPostId: null,
+        releaseId: { not: null },
+        publishDate: { gte: since },
+        deletedAt: null,
+      },
+      orderBy: { publishDate: 'desc' },
+      take: 100,
+    });
+  }
+
+  /**
+   * Webhook-receiver resolution: a Meta payload names the page / IG user
+   * id, which is Integration.internalId. The unique key is (org, internalId),
+   * so the same account can exist in several orgs — every match is returned
+   * and the lead engine no-ops for orgs without an enabled rule.
+   */
+  integrationsByInternalId(internalId: string, tx?: RektrsDb) {
+    return this.db(tx).integration.findMany({
+      where: { internalId, deletedAt: null },
     });
   }
 

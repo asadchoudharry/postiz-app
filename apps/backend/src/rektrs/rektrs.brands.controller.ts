@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
@@ -15,17 +16,23 @@ import { GetOrgFromRequest } from '@gitroom/nestjs-libraries/user/org.from.reque
 import { GetUserFromRequest } from '@gitroom/nestjs-libraries/user/user.from.request';
 import { RektrsCatalogService } from '@gitroom/nestjs-libraries/rektrs/rektrs.catalog.service';
 import { RektrsBrandControlService } from '@gitroom/nestjs-libraries/rektrs/rektrs.brand-control.service';
+import { RektrsLeadsService } from '@gitroom/nestjs-libraries/rektrs/rektrs.leads.service';
 import {
   AssignChannelDto,
   CreateBrandDto,
   PauseBrandDto,
   UpdateBrandDto,
+  UpdateLeadRuleDto,
 } from '@gitroom/nestjs-libraries/dtos/rektrs/rektrs.dto';
 import {
   RektrsFunctionsGuard,
   RequireRektrsFunctions,
 } from '@gitroom/backend/rektrs/rektrs.functions.guard';
-import { requireIfMatch, sessionActor } from '@gitroom/backend/rektrs/rektrs.http';
+import {
+  parseIfMatch,
+  requireIfMatch,
+  sessionActor,
+} from '@gitroom/backend/rektrs/rektrs.http';
 import { RealIP } from 'nestjs-real-ip';
 
 @ApiTags('Rektrs Brands')
@@ -34,7 +41,8 @@ import { RealIP } from 'nestjs-real-ip';
 export class RektrsBrandsController {
   constructor(
     private _catalog: RektrsCatalogService,
-    private _brandControl: RektrsBrandControlService
+    private _brandControl: RektrsBrandControlService,
+    private _leads: RektrsLeadsService
   ) {}
 
   @Post('/')
@@ -124,6 +132,34 @@ export class RektrsBrandsController {
     @RealIP() ip: string
   ) {
     return this._brandControl.resumeBrand(org.id, sessionActor(user, ip), id);
+  }
+
+  // ── W1 lead machine: the brand's comment-to-DM rule ───────────────────────
+  @Get('/:id/lead-rule')
+  async getLeadRule(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string
+  ) {
+    return this._leads.getLeadRule(org.id, id);
+  }
+
+  @Put('/:id/lead-rule')
+  @RequireRektrsFunctions('MANAGER')
+  async updateLeadRule(
+    @GetOrgFromRequest() org: Organization,
+    @GetUserFromRequest() user: User,
+    @Param('id') id: string,
+    @Body() body: UpdateLeadRuleDto,
+    @Headers('if-match') ifMatch: string,
+    @RealIP() ip: string
+  ) {
+    return this._leads.updateLeadRule(
+      org.id,
+      sessionActor(user, ip),
+      id,
+      body,
+      parseIfMatch(ifMatch)
+    );
   }
 
   @Delete('/:id/channels/:integrationId')
