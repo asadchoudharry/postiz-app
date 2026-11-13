@@ -4,7 +4,7 @@ export const LogoTextComponent = () => {
   if (process.env.NEXT_PUBLIC_REKTRS_SOCIAL_BRAND === 'true') {
     return (
       <span className="inline-flex items-center gap-2" role="img" aria-label="REKTRS Social">
-        <span aria-hidden="true" className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#612BD3] text-base font-bold text-white">R</span>
+        <img src="/brand/mark.svg" alt="" aria-hidden="true" className="h-8 w-8 rounded-lg" />
         <span className="whitespace-nowrap text-[19px] font-semibold tracking-tight text-white">REKTRS <span className="font-normal">Social</span></span>
       </span>
     );

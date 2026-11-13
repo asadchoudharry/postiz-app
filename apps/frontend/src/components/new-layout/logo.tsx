@@ -3,13 +3,11 @@
 export const Logo = () => {
   if (process.env.NEXT_PUBLIC_REKTRS_SOCIAL_BRAND === 'true') {
     return (
-      <span
-        role="img"
-        aria-label="REKTRS Social"
-        className="mt-[8px] min-w-[60px] min-h-[60px] w-[60px] h-[60px] flex items-center justify-center rounded-[14px] bg-[#612BD3] text-[30px] font-bold text-white"
-      >
-        <span aria-hidden="true">R</span>
-      </span>
+      <img
+        src="/brand/mark.svg"
+        alt="REKTRS Social"
+        className="mt-[8px] min-w-[60px] min-h-[60px] w-[60px] h-[60px] rounded-[14px]"
+      />
     );
   }
   return (
