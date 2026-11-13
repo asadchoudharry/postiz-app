@@ -4,6 +4,7 @@ on:
     paths:
       - 'apps/frontend/**'
       - 'scripts/rektrs-next16-port.test.mjs'
+      - 'scripts/ui/rektrs-next16-review.test.cjs'
       - '.github/workflows/rektrs-next16-port.yml'
       - '.env.example'
       - 'docs/rektrs-social/**'
@@ -46,6 +47,8 @@ jobs:
           node-version: '22.20.0'
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Render and interact with the real editorial component in jsdom
+        run: node --test scripts/ui/rektrs-next16-review.test.cjs
       - run: pnpm run prisma-generate
       - run: pnpm run build:frontend
 # No image upload, database mutation, provider call or deployment is performed.
