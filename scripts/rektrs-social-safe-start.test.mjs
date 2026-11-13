@@ -57,6 +57,9 @@ test('release-specific Dockerfile has explicit provenance and build-time flags',
   assert.match(docker, /ARG NEXT_PUBLIC_REKTRS_SOCIAL_BRAND=false/);
   assert.match(docker, /ARG NEXT_PUBLIC_REKTRS_CONTENT_REVIEW=false/);
   assert.match(docker, /scripts\/rektrs-social-start\.sh/);
-  assert.doesNotMatch(docker + entry, /db push|accept-data-loss|pm2-run/);
-  assert.doesNotMatch(docker + entry, /ghcr\.io\/gitroomhq/);
+  // Scan executable directives, not explanatory comments describing the blocked path.
+  const executable = (docker + '\n' + entry).split('\n')
+    .filter(line => !line.trimStart().startsWith('#')).join('\n');
+  assert.doesNotMatch(executable, /db push|accept-data-loss|pm2-run/);
+  assert.doesNotMatch(executable, /ghcr\.io\/gitroomhq/);
 });
