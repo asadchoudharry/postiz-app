@@ -13,23 +13,45 @@ const ALLOWED_TAGS = [
   'h2',
   'h3',
   'span',
+  'img',
 ];
 
 const ALLOWED_ATTR = [
+  'dir',
   'href',
   'target',
   'rel',
   'class',
   'data-mention-id',
   'data-mention-label',
+  'src',
+  'alt',
 ];
+
+// <img> keeps data: URIs whatever ALLOWED_URI_REGEXP says, so a picture
+// that doesn't point to a real file is dropped
+DOMPurify.addHook('uponSanitizeElement', (node, data) => {
+  if (
+    data.tagName === 'img' &&
+    !/^https?:\/\//i.test((node as Element).getAttribute('src') || '')
+  ) {
+    node.parentNode?.removeChild(node);
+  }
+});
 
 export const sanitizePostContent = (value: unknown): string => {
   if (typeof value !== 'string' || !value) {
     return '';
   }
 
-  return DOMPurify.sanitize(value, {
+  // a block tag the editor doesn't know would be dropped with its text kept,
+  // gluing its line to the next one
+  const paragraphs = value.replace(
+    /<(\/?)(div|section|article|blockquote|pre|h[4-6])\b[^<>]*>/gi,
+    '<$1p>'
+  );
+
+  return DOMPurify.sanitize(paragraphs, {
     ALLOWED_TAGS,
     ALLOWED_ATTR,
     ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|\/|#)/i,
