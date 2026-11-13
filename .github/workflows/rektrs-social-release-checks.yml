@@ -34,6 +34,7 @@ jobs:
           python-version: '3.12'
       - run: node --experimental-strip-types --test scripts/rektrs-*.test.mjs
       - run: python -m unittest discover -s scripts -p 'test_rektrs*.py' -v
+      - run: node --test scripts/rektrs-volume-recovery.test.cjs
   application-build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
