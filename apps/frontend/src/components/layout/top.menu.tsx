@@ -5,6 +5,7 @@ import { useUser } from '@gitroom/frontend/components/layout/user.context';
 import { useVariables } from '@gitroom/react/helpers/variable.context';
 import { useT } from '@gitroom/react/translation/get.transation.service.client';
 import { MenuItem } from '@gitroom/frontend/components/new-layout/menu-item';
+import { useRektrsMenuItems } from '@gitroom/frontend/components/rektrs/rektrs.nav';
 
 interface MenuItemInterface {
   name: string;
@@ -14,11 +15,14 @@ interface MenuItemInterface {
   hide?: boolean;
   requireBilling?: boolean;
   onClick?: () => void;
+  badge?: number;
 }
 
 export const useMenuItem = () => {
   const { isGeneral } = useVariables();
   const t = useT();
+  // REKTRS Social P3 entries — empty unless the REKTRS brand flag is on.
+  const rektrsMenu = useRektrsMenuItems();
 
   const firstMenu = [
     {
@@ -217,9 +221,11 @@ export const useMenuItem = () => {
     },
   ] satisfies MenuItemInterface[] as MenuItemInterface[];
 
+  const firstMenuWithRektrs = [...firstMenu, ...rektrsMenu];
+
   return {
-    all: [...firstMenu, ...secondMenu],
-    firstMenu,
+    all: [...firstMenuWithRektrs, ...secondMenu],
+    firstMenu: firstMenuWithRektrs,
     secondMenu,
   };
 };
@@ -259,6 +265,7 @@ export const TopMenu: FC = () => {
                   icon={item.icon}
                   key={item.name}
                   onClick={item.onClick}
+                  badge={item.badge}
                 />
               ))
         }

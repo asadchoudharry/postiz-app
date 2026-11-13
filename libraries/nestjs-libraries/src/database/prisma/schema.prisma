@@ -45,6 +45,10 @@ model Organization {
   webhooks            Webhooks[]
   oauthApp            OAuthApp[]
   oauthAuthorizations OAuthAuthorization[]
+  rektrsBrands        Brand[]
+  rektrsCampaigns     Campaign[]
+  rektrsApprovals     Approval[]
+  rektrsSettings      RektrsOrgSettings?
 
   @@index([apiKey])
   @@index([streakSince])
@@ -145,6 +149,10 @@ model UserOrganization {
   organizationId String
   disabled       Boolean      @default(false)
   role           Role         @default(USER)
+  // REKTRS P3 functional layer (design §5): CREATOR | REVIEWER | PUBLISHER |
+  // MANAGER | ANALYST. Empty set = derive defaults from `role` at read time
+  // (SUPERADMIN/ADMIN → all five, USER → {CREATOR}); a non-empty set is authoritative.
+  functions      String[]     @default([])
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id])
@@ -396,6 +404,7 @@ model Integration {
   orderItems            OrderItems[]
   plugs                 Plugs[]
   posts                 Post[]
+  rektrsBrand           BrandIntegration?
 
   @@unique([organizationId, internalId])
   @@index([rootInternalId])
@@ -1838,4 +1847,270 @@ model Announcement {
   description String
   color       AnnouncementColor @default(INFO)
   createdAt   DateTime          @default(now())
+}
+
+// ─── REKTRS P3 — brands, campaigns, approvals ────────────────────────────────
+// All tables are additive and REKTRS-owned (@@map to rektrs_*). Tenancy key on
+// every row: organizationId. Nothing here alters upstream models.
+// Design: P3-1-DESIGN.md §1.3 (REKTRS Social campaigns & approvals).
+
+enum RektrsApprovalState {
+  DRAFT
+  IN_REVIEW
+  APPROVED
+  CHANGES_REQUESTED
+  REJECTED
+  INVALIDATED
+  SCHEDULED
+  PUBLISHED
+  CANCELLED
+  EXPIRED
+}
+
+enum RektrsDecision {
+  APPROVE
+  REQUEST_CHANGES
+  REJECT
+}
+
+enum RektrsActorKind {
+  USER
+  API_KEY
+  MCP
+  CLIENT_TOKEN
+  SYSTEM
+}
+
+model Brand {
+  id             String       @id @default(uuid())
+  organizationId String
+  name           String
+  slug           String
+  description    String?
+  // Brand identity for P2-3 (profiles / multi-brand switcher) — designed here, consumed there.
+  logoMediaId    String?      // → Media.id (validated org-internal at service layer)
+  colorPrimary   String?
+  colorSecondary String?
+  // Policy: channels under a brand with approvalRequired=true cannot be scheduled
+  // or published without an APPROVED submission (design §4). Brand-level is the unit of
+  // enforcement because channels belong to brands, not to campaigns.
+  approvalRequired Boolean    @default(false)
+  createdById    String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  deletedAt      DateTime?
+  version        Int          @default(1)
+
+  organization Organization      @relation(fields: [organizationId], references: [id])
+  campaigns    Campaign[]
+  channels     BrandIntegration[]
+  approvals    Approval[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+  @@index([deletedAt])
+  @@map("rektrs_brands")
+}
+
+// A channel (Integration) belongs to at most one brand. Membership is what pulls
+// a channel's posts into approval policy.
+model BrandIntegration {
+  id            String @id @default(uuid())
+  brandId       String
+  integrationId String @unique          // ≤ 1 brand per channel
+  createdAt     DateTime @default(now())
+
+  brand       Brand       @relation(fields: [brandId], references: [id])
+  integration Integration @relation(fields: [integrationId], references: [id])
+
+  @@index([brandId])
+  @@map("rektrs_brand_integrations")
+}
+
+model Campaign {
+  id             String    @id @default(uuid())
+  organizationId String
+  brandId        String
+  name           String
+  objective      String?
+  status         String    @default("ACTIVE")   // ACTIVE | PAUSED | COMPLETED | ARCHIVED
+  startsAt       DateTime?
+  endsAt         DateTime?
+  ownerId        String                          // marketing manager accountable for the campaign
+  createdById    String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+  version        Int       @default(1)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  brand        Brand        @relation(fields: [brandId], references: [id])
+  brief        Brief?
+  approvals    Approval[]
+
+  @@index([organizationId])
+  @@index([brandId])
+  @@index([ownerId])
+  @@index([deletedAt])
+  @@map("rektrs_campaigns")
+}
+
+model Brief {
+  id                String   @id @default(uuid())
+  organizationId    String
+  campaignId        String   @unique
+  objective         String
+  audience          String?
+  keyMessages       String?                       // markdown
+  mandatoryIncludes String?                       // must appear (links, hashtags, disclosures)
+  prohibitedTerms   String?                       // feeds the advisory editorial check, never auto-blocks
+  tone              String?
+  references        String?                       // JSON: source links/citations (P4 research plugs in here)
+  assigneeId        String?                       // creator assigned to produce the content
+  dueAt             DateTime?
+  createdById       String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  version           Int      @default(1)
+
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+
+  @@index([organizationId])
+  @@index([assigneeId])
+  @@map("rektrs_briefs")
+}
+
+// Immutable snapshot of ONE channel variant of a submission, taken at submit time.
+// The thread group of one integration = one ContentVersion; `payload` is the
+// canonical structure the approval hash is computed over (design §2.3).
+model ContentVersion {
+  id            String   @id @default(uuid())
+  organizationId String
+  approvalId    String
+  integrationId String
+  group         String                          // Post.group of the channel variant
+  versionNo     Int                             // per (approvalId, integrationId), from 1
+  // Canonical payload: ordered thread parts [{content, delay, image:[{mediaId, path}]}]
+  // + provider settings + title/description — exactly as stored on the Post rows.
+  payload       Json
+  contentHash   String                          // SHA-256 over the canonical payload (design §2.3)
+  createdById   String
+  creationMethod CreationMethod @default(WEB)   // provenance of the save that was submitted
+  createdAt     DateTime @default(now())
+
+  approval Approval @relation(fields: [approvalId], references: [id])
+
+  @@unique([approvalId, integrationId, versionNo])
+  @@index([organizationId])
+  @@index([approvalId])
+  @@index([contentHash])
+  @@map("rektrs_content_versions")
+}
+
+// The submission aggregate. One row per submission of one batchId.
+// State machine in design §2. `approvedHash` is the batch hash (§2.3) frozen at approval.
+model Approval {
+  id             String             @id @default(uuid())
+  organizationId String
+  batchId        String                          // → Post.batchId (the submission unit, design §1.2)
+  brandId        String                          // snapshotted from the channels' brand at submit time,
+  campaignId     String?                         // so re-assigning a channel never rewrites history
+  state          RektrsApprovalState @default(DRAFT)
+  round          Int                @default(1)   // resubmission counter
+  submittedById  String?                         // maker (set at submit; maker-checker in design §2.2)
+  submittedAt    DateTime?
+  decidedById    String?
+  decidedAt      DateTime?
+  decision       RektrsDecision?
+  approvedHash   String?                         // batch hash of the approved version set
+  expiresAt      DateTime?                       // optional approval TTL (design §7, decision 3)
+  createdById    String
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  version        Int                @default(1)  // optimistic concurrency (design §3.3)
+
+  organization Organization    @relation(fields: [organizationId], references: [id])
+  brand        Brand           @relation(fields: [brandId], references: [id])
+  campaign     Campaign?       @relation(fields: [campaignId], references: [id])
+  versions     ContentVersion[]
+  events       ApprovalEvent[]
+
+  @@index([organizationId])
+  @@index([batchId])
+  @@index([brandId])
+  @@index([state])
+  @@index([submittedById])
+  @@map("rektrs_approvals")
+}
+
+// Append-only history of an Approval — the review timeline's spine.
+model ApprovalEvent {
+  id         String            @id @default(uuid())
+  approvalId String
+  type       String                          // SUBMITTED | RESUBMITTED | APPROVED | CHANGES_REQUESTED |
+                                             // REJECTED | INVALIDATED | SCHEDULED | RESCHEDULED |
+                                             // PUBLISHED | PUBLISH_BLOCKED | CANCELLED | EXPIRED |
+                                             // COMMENTED | COMMENT_RESOLVED
+  actorId    String?
+  actorKind  RektrsActorKind   @default(USER)
+  commentId  String?                         // → Comments.id when the event is a review comment
+  metadata   Json?                           // e.g. {fromHash, toHash} on INVALIDATED, {postId} on PUBLISHED
+  createdAt  DateTime          @default(now())
+
+  approval Approval @relation(fields: [approvalId], references: [id])
+
+  @@index([approvalId])
+  @@index([createdAt])
+  @@map("rektrs_approval_events")
+}
+
+// Append-only audit for every REKTRS policy-relevant action (not just approvals:
+// brand/campaign writes, policy changes, client-token use, gate blocks).
+model AuditEntry {
+  id             String          @id @default(uuid())
+  organizationId String
+  actorId        String?
+  actorKind      RektrsActorKind @default(USER)
+  action         String                          // e.g. brand.create, approval.decide, gate.schedule_blocked
+  entityType     String                          // Brand | Campaign | Brief | Approval | Post | Policy
+  entityId       String
+  beforeHash     String?
+  afterHash      String?
+  ip             String?
+  metadata       Json?
+  createdAt      DateTime        @default(now())
+
+  @@index([organizationId])
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([createdAt])
+  @@map("rektrs_audit_entries")
+}
+
+// Per-org policy knobs, REKTRS-side so Organization (upstream) stays untouched.
+model RektrsOrgSettings {
+  organizationId          String  @id
+  approvalRequiredDefault Boolean @default(false)  // org-wide floor; Brand.approvalRequired can only raise it
+  allowSelfApproval       Boolean @default(false)  // maker-checker exception switch (design §2.2)
+  approvalTtlHours        Int?                     // null = approvals do not expire (design §7, decision 3)
+  clientApprovalEnabled   Boolean @default(false)  // scoped client decision tokens (design §3.2)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@map("rektrs_org_settings")
+}
+
+// Idempotency keys for mutating /api/rektrs/v1 calls (design §3.3).
+model RektrsIdempotencyKey {
+  id             String   @id @default(uuid())
+  organizationId String
+  key            String
+  requestHash    String                          // same key + different body → 422
+  responseStatus Int
+  responseBody   Json
+  createdAt      DateTime @default(now())
+
+  @@unique([organizationId, key])
+  @@index([createdAt])
+  @@map("rektrs_idempotency_keys")
 }

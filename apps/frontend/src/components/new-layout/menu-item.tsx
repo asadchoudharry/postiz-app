@@ -4,11 +4,12 @@ import { usePathname } from 'next/navigation';
 import clsx from 'clsx';
 import Link from 'next/link';
 
-export const MenuItem: FC<{ label: string; icon: ReactNode; path: string; onClick?: () => void }> = ({
+export const MenuItem: FC<{ label: string; icon: ReactNode; path: string; onClick?: () => void; badge?: number }> = ({
   label,
   icon,
   path,
   onClick,
+  badge,
 }) => {
   const currentPath = usePathname();
   const isActive = currentPath.indexOf(path) === 0;
@@ -20,7 +21,14 @@ export const MenuItem: FC<{ label: string; icon: ReactNode; path: string; onClic
 
   const inner = (
     <>
-      <div className="custom:scale-90 transition-transform">{icon}</div>
+      <div className="custom:scale-90 transition-transform relative">
+        {icon}
+        {!!badge && badge > 0 && (
+          <span className="absolute -top-[6px] -end-[10px] min-w-[16px] h-[16px] px-[3px] rounded-full bg-red-500 text-white text-[9px] font-[700] flex items-center justify-center">
+            {badge > 99 ? '99+' : badge}
+          </span>
+        )}
+      </div>
       <div className="custom:text-[9px] minCustom:text-[10px] leading-[1.1] text-center">
         {label}
       </div>

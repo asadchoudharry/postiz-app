@@ -58,6 +58,10 @@ import { stripHtmlValidation } from '@gitroom/helpers/utils/strip.html.validatio
 import { postContentPlainText } from '@gitroom/helpers/utils/sanitize.post.content';
 import { CreatePublicCommentDto } from '@gitroom/nestjs-libraries/dtos/comments/add.comment.dto';
 import { countLength } from '@gitroom/helpers/utils/count.length';
+import { RektrsApprovalsService } from '@gitroom/nestjs-libraries/rektrs/rektrs.approvals.service';
+import type { RektrsGateVerdict } from '@gitroom/nestjs-libraries/rektrs/rektrs.approvals.service';
+import { rektrsError } from '@gitroom/nestjs-libraries/rektrs/rektrs.errors';
+import { systemActor } from '@gitroom/nestjs-libraries/rektrs/rektrs.actor';
 
 type PostWithConditionals = Post & {
   integration?: Integration;
@@ -75,8 +79,319 @@ export class PostsService {
     private _shortLinkService: ShortLinkService,
     private _openaiService: OpenaiService,
     private _temporalService: TemporalService,
-    private _refreshIntegrationService: RefreshIntegrationService
+    private _refreshIntegrationService: RefreshIntegrationService,
+    private _rektrsApprovalsService: RektrsApprovalsService
   ) {}
+
+  // ── REKTRS P3 enforcement gates (design P3-1 §4) ─────────────────────────
+  // Gate A lives here, inside the single scheduling funnel (§0.1): every
+  // caller of createPost / changeDate / changePostStatus (composer, public
+  // API, MCP tools) inherits it. Scope is resolved from the channel at gate
+  // time — unscoped traffic passes through with zero behaviour change. All
+  // approval-side transitions fired from this funnel are recorded as SYSTEM
+  // events (the funnel has no user context, §0.6).
+
+  /** Translate a gate verdict into the API-facing 403 (§4 row 1). */
+  private rektrsGateException(verdict: RektrsGateVerdict) {
+    switch (verdict.reason) {
+      case 'HASH_MISMATCH':
+        return rektrsError.forbidden(
+          'HASH_MISMATCH',
+          'The approved content changed after approval; the submission was invalidated and must be reviewed again before scheduling.'
+        );
+      case 'APPROVAL_EXPIRED':
+        return rektrsError.forbidden(
+          'APPROVAL_EXPIRED',
+          'The approval for this content expired; it must be re-approved before scheduling.'
+        );
+      default:
+        return rektrsError.forbidden(
+          'APPROVAL_REQUIRED',
+          'This channel requires an approved REKTRS submission before its posts can be scheduled.'
+        );
+    }
+  }
+
+  /**
+   * Force every QUEUE member of a batch back to DRAFT and terminate the root
+   * posts' workflows — the dequeue half of an INVALIDATED submission
+   * (design §2.1). Mirrors changePostStatus('draft'): a repository state
+   * change plus startWorkflow(..., 'DRAFT'), whose first phase terminates
+   * any running workflow for the post.
+   */
+  private async rektrsUnscheduleBatch(
+    orgId: string,
+    batchId: string,
+    seedPosts: Post[] = [],
+    exceptGroup?: string
+  ) {
+    const byId = new Map<string, Post>();
+    for (const post of seedPosts) {
+      byId.set(post.id, post);
+    }
+    const groups = new Set<string>(
+      [...byId.values()].map((p) => p.group as string)
+    );
+    if (exceptGroup) {
+      groups.add(exceptGroup);
+    }
+    for (const group of groups) {
+      const others = await this._postRepository
+        .getPostsByBatch(orgId, batchId, group)
+        .catch(() => [] as Post[]);
+      for (const post of others || []) {
+        byId.set(post.id, post);
+      }
+    }
+    for (const post of byId.values()) {
+      if (post.state === 'QUEUE') {
+        await this._postRepository.changeState(post.id, 'DRAFT');
+      }
+      if (!post.parentPostId) {
+        await this.startWorkflow('main', post.id, orgId, 'DRAFT').catch(
+          () => {}
+        );
+      }
+    }
+  }
+
+  /** Approval-side SCHEDULED bookkeeping after Gate A passed (best-effort). */
+  private async rektrsMarkScheduled(
+    orgId: string,
+    verdict: RektrsGateVerdict
+  ) {
+    if (
+      !verdict.scoped ||
+      !verdict.approvalId ||
+      verdict.state !== 'APPROVED'
+    ) {
+      return;
+    }
+    try {
+      await this._rektrsApprovalsService.markScheduled(
+        orgId,
+        systemActor,
+        verdict.approvalId
+      );
+    } catch (err) {
+      // The posts are already queued; a bookkeeping conflict must not fail
+      // the schedule. Gate B re-reads the approval state at publish time,
+      // so a missed transition can never publish unapproved content.
+      console.log('rektrs markScheduled failed', err);
+    }
+  }
+
+  /** Restore the pre-save state of posts touched by a refused schedule. */
+  private async rektrsRevertCreatedPosts(
+    created: Post[],
+    previousStates: Map<string, State>
+  ) {
+    for (const post of created) {
+      const previous = previousStates.get(post.id) || 'DRAFT';
+      if (post.state !== previous) {
+        await this._postRepository.changeState(post.id, previous);
+      }
+    }
+  }
+
+  /**
+   * Gate A for one batch at schedule time. Throws the gate 403 when a
+   * policy-scoped batch may not be scheduled; on a hash-mismatch
+   * invalidation the whole batch is dequeued first (design §2.1).
+   * Returns the verdict so callers can run the SCHEDULED bookkeeping.
+   */
+  private async rektrsGateBatchOrThrow(
+    orgId: string,
+    batchId: string,
+    ownPosts: Post[] = []
+  ): Promise<RektrsGateVerdict> {
+    const verdict = await this._rektrsApprovalsService.verifyBatchForGate(
+      orgId,
+      batchId,
+      { invalidateOnMismatch: true }
+    );
+    if (verdict.pass) {
+      return verdict;
+    }
+    if (verdict.invalidated) {
+      await this.rektrsUnscheduleBatch(orgId, batchId, ownPosts);
+    }
+    throw this.rektrsGateException(verdict);
+  }
+
+  /**
+   * Gate A for a single post (changeDate / changePostStatus funnels).
+   * Batch-carrying posts verify as their whole submission; a scoped post
+   * with no batch has no submission by construction and is refused.
+   */
+  private async rektrsGateSinglePost(
+    orgId: string,
+    post: Post
+  ): Promise<RektrsGateVerdict | null> {
+    if (post.batchId) {
+      return this.rektrsGateBatchOrThrow(orgId, post.batchId, [post]);
+    }
+    const scope = await this._rektrsApprovalsService.resolveScopeForIntegration(
+      orgId,
+      post.integrationId
+    );
+    if (scope.scoped) {
+      throw this.rektrsGateException({
+        scoped: true,
+        pass: false,
+        reason: 'APPROVAL_REQUIRED',
+      });
+    }
+    return null;
+  }
+
+  /**
+   * Unschedule bookkeeping shared by the draft funnels: a SCHEDULED
+   * submission returns to APPROVED when one of its posts is pulled back to
+   * a draft; a content change discovered at the same time invalidates it
+   * and dequeues the rest of the batch instead (design §2.1).
+   */
+  private async rektrsUnscheduleBookkeeping(
+    orgId: string,
+    batchId: string,
+    seedPosts: Post[] = []
+  ) {
+    try {
+      const verdict =
+        await this._rektrsApprovalsService.verifyBatchForGate(orgId, batchId, {
+          invalidateOnMismatch: true,
+        });
+      if (verdict.invalidated) {
+        await this.rektrsUnscheduleBatch(orgId, batchId, seedPosts);
+      } else if (
+        verdict.scoped &&
+        verdict.state === 'SCHEDULED' &&
+        verdict.approvalId
+      ) {
+        await this._rektrsApprovalsService.markUnscheduled(
+          orgId,
+          systemActor,
+          verdict.approvalId
+        );
+      }
+    } catch (err) {
+      console.log('rektrs unschedule bookkeeping failed', err);
+    }
+  }
+
+  /**
+   * Gate + workflow-start phase of createPost (design §4 rows 1/8/9). Runs
+   * after every channel of the call has been upserted, so the batch hash is
+   * verified over the final content of the whole save — verifying per
+   * channel inside the loop would false-mismatch multi-channel saves.
+   */
+  private async rektrsAfterCreatePosts(
+    orgId: string,
+    type: CreatePostDto['type'],
+    createdPosts: Post[],
+    previousStates: Map<string, State>,
+    pendingWorkflows: Array<{
+      taskQueue: string;
+      postId: string;
+      state: State;
+    }>
+  ) {
+    const postsOfBatch = (batchId: string) =>
+      createdPosts.filter((p) => p.batchId === batchId);
+    const batchIds = [
+      ...new Set(
+        createdPosts.map((p) => p.batchId).filter(Boolean) as string[]
+      ),
+    ];
+
+    if (type === 'schedule' || type === 'now') {
+      // Gate A: every touched batch must verify before any workflow starts.
+      const passed: RektrsGateVerdict[] = [];
+      for (const batchId of batchIds) {
+        try {
+          passed.push(
+            await this.rektrsGateBatchOrThrow(
+              orgId,
+              batchId,
+              postsOfBatch(batchId)
+            )
+          );
+        } catch (err) {
+          // A refused schedule must not leave this call's posts queued.
+          await this.rektrsRevertCreatedPosts(createdPosts, previousStates);
+          throw err;
+        }
+      }
+      for (const pending of pendingWorkflows) {
+        this.startWorkflow(
+          pending.taskQueue,
+          pending.postId,
+          orgId,
+          pending.state
+        ).catch(() => {});
+      }
+      for (const verdict of passed) {
+        await this.rektrsMarkScheduled(orgId, verdict);
+      }
+      return;
+    }
+
+    if (type === 'update') {
+      // Invalidation hook (§4 rows 8/9): a protected edit that changes the
+      // live hash of an APPROVED/SCHEDULED submission invalidates it and
+      // dequeues its posts. The edit itself always succeeds — enforcement
+      // lands on the submission, and Gates A/B guard any later publish.
+      for (const batchId of batchIds) {
+        try {
+          const verdict =
+            await this._rektrsApprovalsService.verifyBatchForGate(
+              orgId,
+              batchId,
+              { invalidateOnMismatch: true }
+            );
+          if (verdict.invalidated) {
+            await this.rektrsUnscheduleBatch(
+              orgId,
+              batchId,
+              postsOfBatch(batchId)
+            );
+          }
+        } catch (err) {
+          console.log('rektrs invalidation hook failed', err);
+        }
+      }
+      return;
+    }
+
+    // Draft saves: workflow starts (terminations for save-as-draft) flush
+    // exactly as upstream, then the unschedule bookkeeping for any queued
+    // post this save pulled back to a draft.
+    for (const pending of pendingWorkflows) {
+      this.startWorkflow(
+        pending.taskQueue,
+        pending.postId,
+        orgId,
+        pending.state
+      ).catch(() => {});
+    }
+    const draftedBatchIds = [
+      ...new Set(
+        createdPosts
+          .filter(
+            (p) => previousStates.get(p.id) === 'QUEUE' && p.state === 'DRAFT'
+          )
+          .map((p) => p.batchId)
+          .filter(Boolean) as string[]
+      ),
+    ];
+    for (const batchId of draftedBatchIds) {
+      await this.rektrsUnscheduleBookkeeping(
+        orgId,
+        batchId,
+        postsOfBatch(batchId)
+      );
+    }
+  }
 
   searchForMissingThreeHoursPosts() {
     return this._postRepository.searchForMissingThreeHoursPosts();
@@ -894,6 +1209,19 @@ export class PostsService {
   }
 
   async deletePost(orgId: string, group: string) {
+    // REKTRS (design §4 row 10): capture the batch BEFORE the group is
+    // deleted — deleting a member of an APPROVED/SCHEDULED submission
+    // changes its membership (the live hash drops the deleted variants),
+    // which must invalidate the submission and dequeue the survivors.
+    let deletedBatchId: string | null = null;
+    try {
+      const members = await this._postRepository.getPostsByGroup(orgId, group);
+      deletedBatchId =
+        members?.find((p) => !p.parentPostId)?.batchId ??
+        members?.[0]?.batchId ??
+        null;
+    } catch (err) {}
+
     const post = await this._postRepository.deletePost(orgId, group);
 
     if (post?.id) {
@@ -919,6 +1247,22 @@ export class PostsService {
           } catch (err) {}
         }
       } catch (err) {}
+
+      if (deletedBatchId) {
+        try {
+          const verdict =
+            await this._rektrsApprovalsService.verifyBatchForGate(
+              orgId,
+              deletedBatchId,
+              { invalidateOnMismatch: true }
+            );
+          if (verdict.invalidated) {
+            await this.rektrsUnscheduleBatch(orgId, deletedBatchId, [], group);
+          }
+        } catch (err) {
+          console.log('rektrs delete hook failed', err);
+        }
+      }
 
       return { id: post.id };
     }
@@ -969,7 +1313,11 @@ export class PostsService {
     try {
       await this._temporalService.client
         .getRawClient()
-        ?.workflow.start('postWorkflowV112', {
+        // REKTRS: new schedules run postWorkflowV113 (Gate B, design §4
+        // row 5). V112 is left untouched and in-flight V112 executions
+        // finish under the old rules; unscoped posts pass through V113's
+        // verification activity unchanged (see P3-2B notes in P3-1-DESIGN.md).
+        ?.workflow.start('postWorkflowV113', {
           workflowId: `post_${postId}`,
           taskQueue: 'main',
           workflowIdConflictPolicy: 'TERMINATE_EXISTING',
@@ -1153,6 +1501,31 @@ export class PostsService {
   ): Promise<any[]> {
     const postList = [];
     const batchId = uuidv4();
+    // REKTRS gate plumbing (design §4): workflow starts are deferred until
+    // every channel of the call has been upserted (Gate A verifies the batch
+    // over its final content), and the pre-save states are captured so a
+    // refused schedule can restore them.
+    const createdPosts: Post[] = [];
+    const pendingWorkflows: Array<{
+      taskQueue: string;
+      postId: string;
+      state: State;
+    }> = [];
+    const previousStates = new Map<string, State>();
+    if (body.type !== 'update') {
+      for (const post of body.posts) {
+        for (const value of post.value || []) {
+          if (value.id && !previousStates.has(value.id)) {
+            const existing = await this._postRepository
+              .getPostById(value.id, orgId)
+              .catch(() => null);
+            if (existing) {
+              previousStates.set(value.id, existing.state);
+            }
+          }
+        }
+      }
+    }
     for (const post of body.posts) {
       if (
         (body.type === 'schedule' || body.type === 'now') &&
@@ -1199,6 +1572,13 @@ export class PostsService {
       );
 
       if (!posts?.length) {
+        await this.rektrsAfterCreatePosts(
+          orgId,
+          body.type,
+          createdPosts,
+          previousStates,
+          pendingWorkflows
+        );
         return [] as any[];
       }
 
@@ -1207,13 +1587,13 @@ export class PostsService {
         posts.filter((p) => existingIds.includes(p.id))
       );
 
+      createdPosts.push(...posts);
       if (body.type !== 'update') {
-        this.startWorkflow(
-          post.settings.__type.split('-')[0].toLowerCase(),
-          posts[0].id,
-          orgId,
-          posts[0].state
-        ).catch((err) => {});
+        pendingWorkflows.push({
+          taskQueue: post.settings.__type.split('-')[0].toLowerCase(),
+          postId: posts[0].id,
+          state: posts[0].state,
+        });
       }
 
       Sentry.metrics.count('post_created', 1);
@@ -1223,6 +1603,13 @@ export class PostsService {
       });
     }
 
+    await this.rektrsAfterCreatePosts(
+      orgId,
+      body.type,
+      createdPosts,
+      previousStates,
+      pendingWorkflows
+    );
     return postList;
   }
 
@@ -1391,6 +1778,17 @@ export class PostsService {
       throw new BadRequestException('Post not found');
     }
 
+    // REKTRS Gate A (design §4 rows 1/2): the status flip is a real
+    // draft → QUEUE funnel (used by the public API), so scheduling through
+    // it is gated exactly like the composer path.
+    let gateVerdict: RektrsGateVerdict | null = null;
+    if (status === 'schedule') {
+      gateVerdict = await this.rektrsGateSinglePost(
+        orgId,
+        getPostById as unknown as Post
+      );
+    }
+
     const state: State = status === 'draft' ? 'DRAFT' : 'QUEUE';
     await this._postRepository.changeState(id, state);
 
@@ -1402,6 +1800,16 @@ export class PostsService {
         state
       );
     } catch (err) {}
+
+    if (status === 'schedule' && gateVerdict) {
+      await this.rektrsMarkScheduled(orgId, gateVerdict);
+    }
+
+    if (status === 'draft' && getPostById.batchId) {
+      await this.rektrsUnscheduleBookkeeping(orgId, getPostById.batchId, [
+        getPostById as unknown as Post,
+      ]);
+    }
 
     return { id, state };
   }
@@ -1417,6 +1825,20 @@ export class PostsService {
 
     if (action === 'schedule' && !republish) {
       this.guardAgainstRepublish(getPostById, 'changeDate');
+    }
+
+    // REKTRS Gate A2 (design §4 row 2): a schedule action on a post that is
+    // (or stays) QUEUE must pass the same verification as Gate A. In this
+    // codebase changeDate on a DRAFT only assigns a date — the repository
+    // keeps the DRAFT state and no workflow starts — so drafts are not
+    // gated here; the draft → QUEUE funnels are createPost and
+    // changePostStatus.
+    let gateVerdict: RektrsGateVerdict | null = null;
+    if (action === 'schedule' && getPostById?.state !== 'DRAFT') {
+      gateVerdict = await this.rektrsGateSinglePost(
+        orgId,
+        getPostById as unknown as Post
+      );
     }
 
     // schedule: Set status to QUEUE and change date (reschedule the post)
@@ -1440,6 +1862,10 @@ export class PostsService {
           getPostById.state === 'DRAFT' ? 'DRAFT' : 'QUEUE'
         );
       } catch (err) {}
+    }
+
+    if (gateVerdict) {
+      await this.rektrsMarkScheduled(orgId, gateVerdict);
     }
 
     return newDate;

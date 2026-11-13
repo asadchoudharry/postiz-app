@@ -33,6 +33,11 @@ import {
   Disconnect,
   PublishedWithError,
 } from '@gitroom/nestjs-libraries/integrations/social.abstract';
+import { RektrsApprovalsService } from '@gitroom/nestjs-libraries/rektrs/rektrs.approvals.service';
+import type { RektrsGateVerdict } from '@gitroom/nestjs-libraries/rektrs/rektrs.approvals.service';
+import { RektrsAuditService } from '@gitroom/nestjs-libraries/rektrs/rektrs.audit.service';
+import { RektrsRepository } from '@gitroom/nestjs-libraries/rektrs/rektrs.repository';
+import { systemActor } from '@gitroom/nestjs-libraries/rektrs/rektrs.actor';
 
 // Drops fields the workflow and downstream activities never read — biggest wins are `error` (grows per retry) and `childrenPost` (Prisma side-loads it on every recursive row).
 function slimPost(post: any) {
@@ -104,12 +109,76 @@ export class PostActivity {
     private _refreshIntegrationService: RefreshIntegrationService,
     private _webhookService: WebhooksService,
     private _temporalService: TemporalService,
-    private _subscriptionService: SubscriptionService
+    private _subscriptionService: SubscriptionService,
+    private _rektrsApprovalsService: RektrsApprovalsService,
+    private _rektrsAuditService: RektrsAuditService,
+    private _rektrsRepository: RektrsRepository
   ) {}
 
   @ActivityMethod()
   async getIntegrationById(orgId: string, id: string) {
     return this._integrationService.getIntegrationById(orgId, id);
+  }
+
+  /**
+   * REKTRS Gate B (design P3-1 §4 row 5): publish-time re-verification,
+   * called by postWorkflowV113 after the publish-date sleep and the group
+   * reload, before any provider call. Unscoped posts pass through
+   * untouched. A blocked verdict is recorded (PUBLISH_BLOCKED event +
+   * audit) and, on hash mismatch, the submission is invalidated here —
+   * the workflow then fails closed without publishing.
+   */
+  @ActivityMethod()
+  async verifyApprovalForPublish(
+    orgId: string,
+    postId: string
+  ): Promise<RektrsGateVerdict> {
+    const verdict = await this._rektrsApprovalsService.verifyVariantForPublish(
+      orgId,
+      postId
+    );
+    if (verdict.pass || !verdict.approvalId) {
+      return verdict;
+    }
+    if (verdict.reason === 'HASH_MISMATCH') {
+      await this._rektrsApprovalsService
+        .invalidateApproval(
+          orgId,
+          verdict.approvalId,
+          systemActor,
+          verdict.approvedHash,
+          verdict.liveHash
+        )
+        .catch(() => {});
+    }
+    await this._rektrsRepository
+      .db()
+      .approvalEvent.create({
+        data: {
+          organizationId: orgId,
+          approvalId: verdict.approvalId,
+          type: 'PUBLISH_BLOCKED',
+          actorId: systemActor.userId,
+          actorKind: systemActor.kind,
+          metadata: {
+            postId,
+            reason: verdict.reason,
+            liveHash: verdict.liveHash,
+          },
+        },
+      })
+      .catch(() => {});
+    await this._rektrsAuditService
+      .write(orgId, systemActor, {
+        action: 'approval.publish_blocked',
+        entityType: 'Approval',
+        entityId: verdict.approvalId,
+        beforeHash: verdict.approvedHash,
+        afterHash: verdict.liveHash,
+        metadata: { postId, reason: verdict.reason },
+      })
+      .catch(() => {});
+    return verdict;
   }
 
   @ActivityMethod()
@@ -118,7 +187,10 @@ export class PostActivity {
     for (const post of list) {
       await this._temporalService.client
         .getRawClient()
-        .workflow.signalWithStart('postWorkflowV112', {
+        // REKTRS: recovered posts also run V113 so a restarted schedule is
+        // still behind Gate B (signalWithStart only starts a fresh
+        // execution when none exists; live ones just receive the signal).
+        .workflow.signalWithStart('postWorkflowV113', {
           workflowId: `post_${post.id}`,
           taskQueue: 'main',
           signal: 'poke',

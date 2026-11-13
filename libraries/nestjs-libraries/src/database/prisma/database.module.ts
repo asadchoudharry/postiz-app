@@ -36,6 +36,12 @@ import { SignatureService } from '@gitroom/nestjs-libraries/database/prisma/sign
 import { AutopostRepository } from '@gitroom/nestjs-libraries/database/prisma/autopost/autopost.repository';
 import { AutopostService } from '@gitroom/nestjs-libraries/database/prisma/autopost/autopost.service';
 import { SetsService } from '@gitroom/nestjs-libraries/database/prisma/sets/sets.service';
+import { RektrsRepository } from '@gitroom/nestjs-libraries/rektrs/rektrs.repository';
+import { RektrsAuditService } from '@gitroom/nestjs-libraries/rektrs/rektrs.audit.service';
+import { RektrsRolesService } from '@gitroom/nestjs-libraries/rektrs/rektrs.roles.service';
+import { RektrsIdempotencyService } from '@gitroom/nestjs-libraries/rektrs/rektrs.idempotency.service';
+import { RektrsCatalogService } from '@gitroom/nestjs-libraries/rektrs/rektrs.catalog.service';
+import { RektrsApprovalsService } from '@gitroom/nestjs-libraries/rektrs/rektrs.approvals.service';
 import { SetsRepository } from '@gitroom/nestjs-libraries/database/prisma/sets/sets.repository';
 import { ThirdPartyRepository } from '@gitroom/nestjs-libraries/database/prisma/third-party/third-party.repository';
 import { ThirdPartyService } from '@gitroom/nestjs-libraries/database/prisma/third-party/third-party.service';
@@ -98,6 +104,12 @@ import { AdminStatsService } from '@gitroom/nestjs-libraries/database/prisma/adm
     ShortLinkService,
     SetsService,
     SetsRepository,
+    RektrsRepository,
+    RektrsAuditService,
+    RektrsRolesService,
+    RektrsIdempotencyService,
+    RektrsCatalogService,
+    RektrsApprovalsService,
     ThirdPartyRepository,
     ThirdPartyService,
     OAuthRepository,
