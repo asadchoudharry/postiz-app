@@ -1,5 +1,7 @@
 # Consolidated candidate evidence — 13 November 2026
 
+> Subsequent update: GitHub run `43309821000` completed the old candidate's full build and regression jobs successfully. Production inspection has since established a different Next 16/Temporal runtime. See [LIVE_RUNTIME_2026-11-13.md](LIVE_RUNTIME_2026-11-13.md) for the current evidence and remaining host SSH/backup gate. Historical local test results below are retained as recorded.
+
 Candidate branch: `release/rektrs-social-2026-11-13`. Baseline: `main` at `9b59dbd7460d6c760876c83b486173dc4cd12e0b`. Scope: combine PRs #1–#4, resolve their `.env.example` conflict, add the complete delivery plan, read-only target-specific Dokploy inventory, real component interaction tests and a consolidated CI build gate. **Not a deployed release or a completed enterprise product.**
 
 ## Verification actually run

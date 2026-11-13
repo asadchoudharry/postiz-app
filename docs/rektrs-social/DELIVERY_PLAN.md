@@ -2,6 +2,8 @@
 
 Date: 13 November 2026 (Asia/Karachi). Delivery lead: Codex, with owner decisions only for credentials, commercial commitments and policy choices that cannot be inferred.
 
+> Latest live discovery: [LIVE_RUNTIME_2026-11-13.md](LIVE_RUNTIME_2026-11-13.md). Authenticated Dokploy access now works. The production app uses Next 16/Temporal and matches the recorded October upstream dependency/schema fingerprints; the old fork must not be deployed as-is. Host SSH authentication and verified backup/restore remain outstanding.
+
 ## Product and deployment contract
 
 Deliver an operated social publishing product for a company or agency: manage brands and clients, plan campaigns, create and review content, schedule approved work, monitor delivery, measure results and retain an audit trail. Existing Postiz publishing remains the system of record until an explicitly tested replacement exists.
