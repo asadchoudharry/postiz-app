@@ -102,7 +102,7 @@ describe('Gate B activity — verifyApprovalForPublish', () => {
     );
     expect(approvalEventCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        organizationId: ORG,
+        // ApprovalEvent has no organizationId column; org derives via approval.
         approvalId: 'a1',
         type: 'PUBLISH_BLOCKED',
         metadata: expect.objectContaining({

@@ -155,7 +155,8 @@ export class PostActivity {
       .db()
       .approvalEvent.create({
         data: {
-          organizationId: orgId,
+          // ApprovalEvent carries no organizationId (schema.prisma); the
+          // owning org is derivable via the approval relation.
           approvalId: verdict.approvalId,
           type: 'PUBLISH_BLOCKED',
           actorId: systemActor.userId,
