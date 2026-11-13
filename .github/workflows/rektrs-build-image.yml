@@ -13,11 +13,11 @@ on:
       image_tag:
         description: "Image tag to publish (e.g. next16-f7b59d85)"
         required: true
-        default: "next16-8da345e1"
+        default: "next16-adc942a7"
       source_revision:
         description: "Full source commit SHA stamped into the image (REKTRS_SOURCE_REVISION)"
         required: true
-        default: "8da345e1841db6f6d15b423aead7b0d4505a8c7c"
+        default: "adc942a7e3c6c9a883bfac1faf3567c4aed890a8"
       app_version:
         description: "NEXT_PUBLIC_VERSION value"
         required: true
@@ -53,9 +53,9 @@ jobs:
           context: .
           file: Dockerfile.rektrs
           push: true
-          tags: ghcr.io/asadchoudharry/postiz-app:${{ inputs.image_tag || 'next16-8da345e1' }}
+          tags: ghcr.io/asadchoudharry/postiz-app:${{ inputs.image_tag || 'next16-adc942a7' }}
           build-args: |
-            REKTRS_SOURCE_REVISION=${{ inputs.source_revision || '8da345e1841db6f6d15b423aead7b0d4505a8c7c' }}
+            REKTRS_SOURCE_REVISION=${{ inputs.source_revision || 'adc942a7e3c6c9a883bfac1faf3567c4aed890a8' }}
             NEXT_PUBLIC_VERSION=${{ inputs.app_version || '2.25.3-rektrs' }}
             NEXT_PUBLIC_REKTRS_SOCIAL_BRAND=true
             NEXT_PUBLIC_REKTRS_CONTENT_REVIEW=true
