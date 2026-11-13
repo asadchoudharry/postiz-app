@@ -53,7 +53,9 @@ jobs:
           context: .
           file: Dockerfile.rektrs
           push: true
-          tags: ghcr.io/asadchoudharry/postiz-app:${{ inputs.image_tag || 'next16-41fb9529' }}
+          tags: |
+            ghcr.io/asadchoudharry/postiz-app:${{ inputs.image_tag || 'next16-41fb9529' }}
+            ghcr.io/asadchoudharry/postiz-app:next16-current
           build-args: |
             REKTRS_SOURCE_REVISION=${{ inputs.source_revision || '41fb952941ae99a4737b39c6d17df5fc7f47e4c2' }}
             NEXT_PUBLIC_VERSION=${{ inputs.app_version || '2.25.3-rektrs' }}
@@ -61,3 +63,11 @@ jobs:
             NEXT_PUBLIC_REKTRS_CONTENT_REVIEW=true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Notify Dokploy (auto-deploy)
+        if: success()
+        run: |
+          if [ -n "${{ secrets.DOKPLOY_DEPLOY_WEBHOOK }}" ]; then
+            curl -fsS -X POST "${{ secrets.DOKPLOY_DEPLOY_WEBHOOK }}" || echo "::warning::Dokploy deploy webhook call failed"
+          else
+            echo "::warning::DOKPLOY_DEPLOY_WEBHOOK secret is not set"
+          fi
