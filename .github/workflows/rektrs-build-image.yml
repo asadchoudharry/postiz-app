@@ -4,6 +4,10 @@ name: "REKTRS Build Image"
 # runners and pushes it to GHCR. The production host only PULLS the finished
 # image — builds never run on the shared host (2026-11-13 incident: an
 # on-host build exhausted the shared server's RAM and took every site down).
+#
+# Triggers: manual dispatch (once registered) OR a push to the release
+# branch that touches this file or Dockerfile.rektrs (push events use the
+# default input values below via the || fallbacks).
 on:
   workflow_dispatch:
     inputs:
@@ -19,6 +23,12 @@ on:
         description: "NEXT_PUBLIC_VERSION value"
         required: true
         default: "2.25.3-rektrs"
+  push:
+    branches:
+      - release/rektrs-social-next16-2026-11-13
+    paths:
+      - ".github/workflows/rektrs-build-image.yml"
+      - "Dockerfile.rektrs"
 
 permissions:
   contents: read
@@ -47,10 +57,10 @@ jobs:
           context: .
           file: Dockerfile.rektrs
           push: true
-          tags: ghcr.io/asadchoudharry/postiz-app:${{ inputs.image_tag }}
+          tags: ghcr.io/asadchoudharry/postiz-app:${{ inputs.image_tag || 'next16-f7b59d85' }}
           build-args: |
-            REKTRS_SOURCE_REVISION=${{ inputs.source_revision }}
-            NEXT_PUBLIC_VERSION=${{ inputs.app_version }}
+            REKTRS_SOURCE_REVISION=${{ inputs.source_revision || 'f7b59d85a27421096fe4246f07e232aae09c46bd' }}
+            NEXT_PUBLIC_VERSION=${{ inputs.app_version || '2.25.3-rektrs' }}
             NEXT_PUBLIC_REKTRS_SOCIAL_BRAND=true
             NEXT_PUBLIC_REKTRS_CONTENT_REVIEW=true
           cache-from: type=gha
