@@ -94,6 +94,11 @@ export class PostsService {
   /** Translate a gate verdict into the API-facing 403 (§4 row 1). */
   private rektrsGateException(verdict: RektrsGateVerdict) {
     switch (verdict.reason) {
+      case 'BRAND_PAUSED':
+        return rektrsError.forbidden(
+          'BRAND_PAUSED',
+          'This brand is paused (crisis kill-switch); its posts cannot be scheduled or published until a manager resumes the brand.'
+        );
       case 'HASH_MISMATCH':
         return rektrsError.forbidden(
           'HASH_MISMATCH',
@@ -235,6 +240,16 @@ export class PostsService {
       orgId,
       post.integrationId
     );
+    if (scope.brandPaused) {
+      // W5: the kill-switch binds batch-less posts too, independent of
+      // approval policy.
+      throw this.rektrsGateException({
+        scoped: true,
+        pass: false,
+        reason: 'BRAND_PAUSED',
+        brandId: scope.brandId,
+      });
+    }
     if (scope.scoped) {
       throw this.rektrsGateException({
         scoped: true,
@@ -243,6 +258,60 @@ export class PostsService {
       });
     }
     return null;
+  }
+
+  /**
+   * REKTRS W5 — the post-manipulation half of a brand pause, called by
+   * RektrsBrandControlService after the brand row is marked paused (so any
+   * concurrent schedule attempt is already refused by Gate A). Every given
+   * QUEUE post is forced back to DRAFT with its workflow terminated,
+   * reusing the batch dequeue + approval bookkeeping of the gates:
+   * batched posts go through rektrsUnscheduleBatch (which also flips the
+   * group's other QUEUE members) followed by the SCHEDULED → APPROVED
+   * bookkeeping; batch-less posts are dequeued one by one.
+   */
+  async rektrsDequeueBrandPosts(orgId: string, posts: Post[]) {
+    const byBatch = new Map<string, Post[]>();
+    const batchless: Post[] = [];
+    for (const post of posts) {
+      if (post.batchId) {
+        const rows = byBatch.get(post.batchId) || [];
+        rows.push(post);
+        byBatch.set(post.batchId, rows);
+      } else {
+        batchless.push(post);
+      }
+    }
+    for (const [batchId, seeds] of byBatch) {
+      await this.rektrsUnscheduleBatch(orgId, batchId, seeds);
+      await this.rektrsUnscheduleBookkeeping(orgId, batchId, seeds);
+    }
+    for (const post of batchless) {
+      if (post.state === 'QUEUE') {
+        await this._postRepository.changeState(post.id, 'DRAFT');
+      }
+      if (!post.parentPostId) {
+        await this.startWorkflow('main', post.id, orgId, 'DRAFT').catch(
+          () => {}
+        );
+      }
+    }
+  }
+
+  /**
+   * REKTRS W5 — resume helper: after a pulled group's root has been
+   * restored through the normal gate path (changePostStatus 'schedule'),
+   * flip the group's remaining DRAFT members back to QUEUE, mirroring how
+   * createPost queues every row of a variant. Callers must only invoke
+   * this for a root whose gate check passed.
+   */
+  async rektrsRestoreGroupMembers(orgId: string, group: string) {
+    const rows = await this._postRepository.getPostsByGroup(orgId, group);
+    for (const row of rows || []) {
+      if (row.state === 'DRAFT') {
+        await this._postRepository.changeState(row.id, 'QUEUE');
+      }
+    }
   }
 
   /**
@@ -305,6 +374,30 @@ export class PostsService {
     ];
 
     if (type === 'schedule' || type === 'now') {
+      // W5: batch-less posts carry no submission to verify, but a PAUSED
+      // brand refuses even those at Gate A — the kill-switch binds every
+      // scheduling funnel, not only submission-backed ones (Gate B remains
+      // the backstop). Policy scope for batch-less creates is unchanged
+      // from P3 (verified at Gate B), only the pause is checked here.
+      for (const post of createdPosts) {
+        if (post.batchId) {
+          continue;
+        }
+        const scope =
+          await this._rektrsApprovalsService.resolveScopeForIntegration(
+            orgId,
+            post.integrationId
+          );
+        if (scope.brandPaused) {
+          await this.rektrsRevertCreatedPosts(createdPosts, previousStates);
+          throw this.rektrsGateException({
+            scoped: true,
+            pass: false,
+            reason: 'BRAND_PAUSED',
+            brandId: scope.brandId,
+          });
+        }
+      }
       // Gate A: every touched batch must verify before any workflow starts.
       const passed: RektrsGateVerdict[] = [];
       for (const batchId of batchIds) {

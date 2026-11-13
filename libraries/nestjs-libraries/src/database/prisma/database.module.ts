@@ -42,6 +42,8 @@ import { RektrsRolesService } from '@gitroom/nestjs-libraries/rektrs/rektrs.role
 import { RektrsIdempotencyService } from '@gitroom/nestjs-libraries/rektrs/rektrs.idempotency.service';
 import { RektrsCatalogService } from '@gitroom/nestjs-libraries/rektrs/rektrs.catalog.service';
 import { RektrsApprovalsService } from '@gitroom/nestjs-libraries/rektrs/rektrs.approvals.service';
+import { RektrsAlertsService } from '@gitroom/nestjs-libraries/rektrs/rektrs.alerts.service';
+import { RektrsBrandControlService } from '@gitroom/nestjs-libraries/rektrs/rektrs.brand-control.service';
 import { SetsRepository } from '@gitroom/nestjs-libraries/database/prisma/sets/sets.repository';
 import { ThirdPartyRepository } from '@gitroom/nestjs-libraries/database/prisma/third-party/third-party.repository';
 import { ThirdPartyService } from '@gitroom/nestjs-libraries/database/prisma/third-party/third-party.service';
@@ -110,6 +112,8 @@ import { AdminStatsService } from '@gitroom/nestjs-libraries/database/prisma/adm
     RektrsIdempotencyService,
     RektrsCatalogService,
     RektrsApprovalsService,
+    RektrsAlertsService,
+    RektrsBrandControlService,
     ThirdPartyRepository,
     ThirdPartyService,
     OAuthRepository,

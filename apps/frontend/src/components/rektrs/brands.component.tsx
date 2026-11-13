@@ -11,8 +11,11 @@ import { useModals } from '@gitroom/frontend/components/layout/new-modal';
 import { useToaster } from '@gitroom/react/toaster/toaster';
 import { useT } from '@gitroom/react/translation/get.transation.service.client';
 import {
+  formatDateTime,
   readableRektrsError,
   RektrsBrand,
+  RektrsBrandPauseResult,
+  RektrsBrandResumeResult,
   slugifyClient,
   useRektrsCall,
 } from '@gitroom/frontend/components/rektrs/rektrs.api';
@@ -24,6 +27,7 @@ import {
   useHasRektrsFunction,
   useIntegrations,
   useOrgSettings,
+  useTeamMembers,
 } from '@gitroom/frontend/components/rektrs/rektrs.shared';
 import clsx from 'clsx';
 
@@ -164,6 +168,181 @@ const BrandChannels: FC<{ brand: RektrsBrand }> = ({ brand }) => {
           </div>
         ) : null}
       </div>
+    </div>
+  );
+};
+
+/**
+ * W5 crisis kill-switch (AUTOMATION-WORKFLOWS.md W5): the pause modal asks
+ * for an optional reason; the banner + resume live in BrandKillSwitch.
+ */
+const BrandPauseModal: FC<{ brand: RektrsBrand }> = ({ brand }) => {
+  const t = useT();
+  const modal = useModals();
+  const call = useRektrsCall();
+  const toaster = useToaster();
+  const { mutate } = useSWRConfig();
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const pause = useCallback(async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const result = await call<RektrsBrandPauseResult>(
+        `/rektrs/v1/brands/${brand.id}/pause`,
+        {
+          method: 'POST',
+          body: { reason: reason.trim() || undefined },
+        }
+      );
+      await mutate('/rektrs/v1/brands');
+      toaster.show(
+        t(
+          'rektrs_brand_paused_toast',
+          'Brand paused — {{pulled}} queued post(s) pulled back to drafts',
+          { pulled: String(result.pulledCount) }
+        ),
+        'success'
+      );
+      modal.closeCurrent();
+    } catch (e) {
+      setError(
+        readableRektrsError(e, t('rektrs_brand_pause_failed', 'Could not pause the brand'))
+      );
+    } finally {
+      setBusy(false);
+    }
+  }, [brand.id, call, modal, mutate, reason, t, toaster]);
+
+  return (
+    <div className="flex flex-col gap-[14px] p-[4px]">
+      <div className="text-[14px]">
+        {t(
+          'rektrs_pause_brand_explainer',
+          'Pausing {{brand}} immediately pulls every queued post on its channels back to drafts and blocks scheduling and publishing until a manager resumes it. Approvals stay valid — resume restores the original publish dates.',
+          { brand: brand.name }
+        )}
+      </div>
+      <div className="flex flex-col gap-[6px]">
+        <div className="text-[14px]">
+          {t('rektrs_pause_reason', 'Reason (optional)')}
+        </div>
+        <div className="bg-newBgColorInner border-newTableBorder border rounded-[8px] flex items-center">
+          <input
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder={t('rektrs_pause_reason_placeholder', 'e.g. Wrong creative went out')}
+            className="h-[42px] bg-transparent outline-none flex-1 text-[14px] px-[16px]"
+          />
+        </div>
+      </div>
+      {error ? <div className="text-red-400 text-[13px]">{error}</div> : null}
+      <div className="flex gap-[10px] justify-end">
+        <Button type="button" secondary onClick={() => modal.closeCurrent()}>
+          {t('cancel', 'Cancel')}
+        </Button>
+        <Button type="button" loading={busy} onClick={pause}>
+          {t('rektrs_pause_brand', 'Pause brand')}
+        </Button>
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Kill-switch surface for one brand: a PAUSED banner (who / when / why)
+ * with Resume for managers, or a Pause button opening the confirm modal.
+ * Renders nothing for non-managers when the brand is live; the banner
+ * itself stays visible to everyone so the state is never a surprise.
+ */
+const BrandKillSwitch: FC<{ brand: RektrsBrand }> = ({ brand }) => {
+  const t = useT();
+  const modal = useModals();
+  const call = useRektrsCall();
+  const toaster = useToaster();
+  const { mutate } = useSWRConfig();
+  const canManage = useHasRektrsFunction('MANAGER');
+  const { nameOf } = useTeamMembers();
+  const [busy, setBusy] = useState(false);
+
+  const resume = useCallback(async () => {
+    setBusy(true);
+    try {
+      const result = await call<RektrsBrandResumeResult>(
+        `/rektrs/v1/brands/${brand.id}/resume`,
+        { method: 'POST', body: {} }
+      );
+      await mutate('/rektrs/v1/brands');
+      toaster.show(
+        result.skipped.length
+          ? t(
+              'rektrs_brand_resumed_partial_toast',
+              'Brand resumed — {{restored}} post(s) restored, {{skipped}} stayed drafts and need a look',
+              {
+                restored: String(result.restored.length),
+                skipped: String(result.skipped.length),
+              }
+            )
+          : t(
+              'rektrs_brand_resumed_toast',
+              'Brand resumed — {{restored}} post(s) restored to the queue',
+              { restored: String(result.restored.length) }
+            ),
+        result.skipped.length ? 'warning' : 'success'
+      );
+    } catch (e) {
+      toaster.show(
+        readableRektrsError(e, t('rektrs_brand_resume_failed', 'Could not resume the brand')),
+        'warning'
+      );
+    } finally {
+      setBusy(false);
+    }
+  }, [brand.id, call, mutate, t, toaster]);
+
+  const openPause = useCallback(() => {
+    modal.openModal({
+      title: t('rektrs_pause_brand', 'Pause brand'),
+      withCloseButton: true,
+      classNames: { modal: 'w-[100%] max-w-[520px] text-textColor' },
+      children: <BrandPauseModal brand={brand} />,
+    });
+  }, [brand, modal, t]);
+
+  if (brand.pausedAt) {
+    return (
+      <div className="border border-red-500/40 bg-red-500/10 rounded-[8px] p-[12px] flex flex-col gap-[6px]">
+        <div className="text-[13px] font-[600] text-red-500">
+          {t('rektrs_brand_paused_banner', 'PAUSED — nothing on this brand can be scheduled or published')}
+        </div>
+        <div className="text-[12px] opacity-80">
+          {t('rektrs_brand_paused_since', 'Paused {{when}} by {{who}}', {
+            when: formatDateTime(brand.pausedAt),
+            who: nameOf(brand.pausedById),
+          })}
+          {brand.pauseReason ? ` — ${brand.pauseReason}` : ''}
+        </div>
+        {canManage ? (
+          <div>
+            <Button type="button" loading={busy} onClick={resume}>
+              {t('rektrs_resume_brand', 'Resume brand')}
+            </Button>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (!canManage) {
+    return null;
+  }
+  return (
+    <div>
+      <Button type="button" secondary onClick={openPause}>
+        {t('rektrs_pause_brand', 'Pause brand')}
+      </Button>
     </div>
   );
 };
@@ -344,7 +523,24 @@ const BrandFormModal: FC<{
         </form>
       </FormProvider>
       {liveBrand ? (
-        <div className="border-t border-newTableBorder pt-[14px]">
+        <div className="border-t border-newTableBorder pt-[14px] flex flex-col gap-[14px]">
+          <div className="flex flex-col gap-[6px]">
+            <div className="text-[14px] font-[600]">
+              {t('rektrs_brand_status', 'Brand status')}
+            </div>
+            <div className="text-[12px] opacity-60">
+              {liveBrand.approvalRequired
+                ? t(
+                    'rektrs_brand_status_policy_on',
+                    'Approval policy: ON — posts on this brand’s channels need an approved submission before scheduling.'
+                  )
+                : t(
+                    'rektrs_brand_status_policy_off',
+                    'Approval policy: OFF — posts on this brand’s channels can be scheduled without approval (unless the org-wide default applies).'
+                  )}
+            </div>
+            <BrandKillSwitch brand={liveBrand} />
+          </div>
           <BrandChannels brand={liveBrand} />
         </div>
       ) : null}
@@ -378,6 +574,42 @@ const OrgPolicyCard: FC = () => {
     },
     [call, mutate, t, toaster]
   );
+
+  // W2 alert-chain knobs (local edit state; saved explicitly, not per keystroke)
+  const [reminderHours, setReminderHours] = useState('');
+  const [escalationHours, setEscalationHours] = useState('');
+  useEffect(() => {
+    if (settings) {
+      setReminderHours(String(settings.alertReminderHours ?? 4));
+      setEscalationHours(String(settings.alertEscalationHours ?? 12));
+    }
+  }, [settings?.alertReminderHours, settings?.alertEscalationHours]);
+
+  const saveAlertHours = useCallback(async () => {
+    const reminder = Number.parseInt(reminderHours, 10);
+    const escalation = Number.parseInt(escalationHours, 10);
+    if (
+      !Number.isFinite(reminder) ||
+      reminder < 1 ||
+      reminder > 168 ||
+      !Number.isFinite(escalation) ||
+      escalation < 1 ||
+      escalation > 720
+    ) {
+      toaster.show(
+        t(
+          'rektrs_alert_hours_invalid',
+          'Reminder must be 1–168 hours and escalation 1–720 hours.'
+        ),
+        'warning'
+      );
+      return;
+    }
+    await patch({
+      alertReminderHours: reminder,
+      alertEscalationHours: escalation,
+    });
+  }, [reminderHours, escalationHours, patch, t, toaster]);
 
   if (!settings) {
     return null;
@@ -441,6 +673,79 @@ const OrgPolicyCard: FC = () => {
         value={settings.allowSelfApproval}
         onChange={(v) => patch({ allowSelfApproval: v })}
       />
+      <div className="border-t border-newTableBorder mt-[10px] pt-[12px]">
+        <div className="text-[15px] font-[600] mb-[2px]">
+          {t('rektrs_alert_settings_title', 'Approval alerts')}
+        </div>
+        <div className="text-[12px] opacity-60 max-w-[520px]">
+          {t(
+            'rektrs_alert_settings_hint',
+            'Reviewers are alerted when a submission arrives and the maker is told the decision. A submission left undecided gets one reminder, then escalates to managers.'
+          )}
+        </div>
+        <div className="flex flex-wrap items-end gap-[12px] py-[8px]">
+          <div className="flex flex-col gap-[6px]">
+            <div className="text-[14px]">
+              {t('rektrs_alert_reminder_hours', 'Remind reviewers after (hours)')}
+            </div>
+            <div className="bg-newBgColorInner border-newTableBorder border rounded-[8px] flex items-center w-[120px]">
+              <input
+                type="number"
+                min={1}
+                max={168}
+                disabled={!canManage || busy}
+                value={reminderHours}
+                onChange={(e) => setReminderHours(e.target.value)}
+                className="h-[42px] bg-transparent outline-none flex-1 text-[14px] px-[16px] w-full"
+              />
+            </div>
+          </div>
+          <div className="flex flex-col gap-[6px]">
+            <div className="text-[14px]">
+              {t('rektrs_alert_escalation_hours', 'Escalate to managers after (hours)')}
+            </div>
+            <div className="bg-newBgColorInner border-newTableBorder border rounded-[8px] flex items-center w-[120px]">
+              <input
+                type="number"
+                min={1}
+                max={720}
+                disabled={!canManage || busy}
+                value={escalationHours}
+                onChange={(e) => setEscalationHours(e.target.value)}
+                className="h-[42px] bg-transparent outline-none flex-1 text-[14px] px-[16px] w-full"
+              />
+            </div>
+          </div>
+          {canManage ? (
+            <Button
+              type="button"
+              secondary
+              loading={busy}
+              onClick={saveAlertHours}
+            >
+              {t('rektrs_alert_hours_save', 'Save alert timing')}
+            </Button>
+          ) : null}
+        </div>
+        <Toggle
+          label={t('rektrs_alert_in_app', 'In-app alerts')}
+          hint={t(
+            'rektrs_alert_in_app_hint',
+            'Show approval alerts in the app notification feed.'
+          )}
+          value={settings.alertInAppEnabled ?? true}
+          onChange={(v) => patch({ alertInAppEnabled: v })}
+        />
+        <Toggle
+          label={t('rektrs_alert_email', 'Email alerts')}
+          hint={t(
+            'rektrs_alert_email_hint',
+            'Email reviewers, makers and managers about submissions awaiting them.'
+          )}
+          value={settings.alertEmailEnabled ?? true}
+          onChange={(v) => patch({ alertEmailEnabled: v })}
+        />
+      </div>
       {!canManage ? (
         <div className="text-[12px] opacity-60 mt-[4px]">
           {t(
@@ -519,7 +824,11 @@ export const BrandsComponent: FC = () => {
                 <div className="text-[16px] font-[600] truncate">
                   {brand.name}
                 </div>
-                {brand.approvalRequired ? (
+                {brand.pausedAt ? (
+                  <span className="ms-auto inline-flex rounded-full bg-red-500/15 text-red-500 px-[8px] py-[2px] text-[11px] font-[600] whitespace-nowrap">
+                    {t('rektrs_paused_badge', 'Paused')}
+                  </span>
+                ) : brand.approvalRequired ? (
                   <span className="ms-auto inline-flex rounded-full bg-amber-500/15 text-amber-600 px-[8px] py-[2px] text-[11px] font-[600] whitespace-nowrap">
                     {t('rektrs_approval_badge', 'Approval required')}
                   </span>
@@ -554,6 +863,7 @@ export const BrandsComponent: FC = () => {
                   ) : null}
                 </div>
               </div>
+              <BrandKillSwitch brand={brand} />
               {canManage ? (
                 <div className="mt-auto pt-[4px]">
                   <Button secondary onClick={() => openBrand(brand)}>

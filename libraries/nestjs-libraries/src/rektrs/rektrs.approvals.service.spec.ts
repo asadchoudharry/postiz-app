@@ -57,6 +57,8 @@ const makeApproval = (overrides: Record<string, unknown> = {}): any => ({
   decision: null,
   approvedHash: null,
   expiresAt: null,
+  reminderSentAt: null,
+  escalatedAt: null,
   createdById: 'maker-1',
   createdAt: new Date('2026-01-15T09:00:00.000Z'),
   updatedAt: new Date('2026-01-15T09:00:00.000Z'),
@@ -80,7 +82,12 @@ function buildService(opts: {
     opts.membership === undefined
       ? {
           brandId: 'brand-1',
-          brand: { id: 'brand-1', approvalRequired: true, deletedAt: null },
+          brand: {
+            id: 'brand-1',
+            approvalRequired: true,
+            deletedAt: null,
+            pausedAt: null,
+          },
         }
       : opts.membership;
 
@@ -141,15 +148,20 @@ function buildService(opts: {
     })),
   };
   const audit: any = { write: jest.fn(async () => ({})), forEntity: jest.fn(async () => []) };
-  const notifications: any = { inAppNotification: jest.fn(async () => ({})) };
+  const alerts: any = {
+    alertSubmissionInReview: jest.fn(async () => ({})),
+    alertDecision: jest.fn(async () => ({})),
+    alertBrandPaused: jest.fn(async () => ({})),
+    alertBrandResumed: jest.fn(async () => ({})),
+  };
 
   const service = new RektrsApprovalsService(
     repository,
     audit,
     roles,
-    notifications
+    alerts
   );
-  return { service, repository, fakeDb, audit, roles, notifications };
+  return { service, repository, fakeDb, audit, roles, alerts };
 }
 
 const reviewer: RektrsActor = { userId: 'reviewer-1', kind: 'USER' };
@@ -328,5 +340,127 @@ describe('RektrsApprovalsService.resolveScopeForIntegration', () => {
     const { service } = buildService({ membership: null });
     const scope = await service.resolveScopeForIntegration(ORG, 'int-9');
     expect(scope).toMatchObject({ scoped: false, source: 'none' });
+  });
+});
+
+const pausedMembership = {
+  brandId: 'brand-1',
+  brand: {
+    id: 'brand-1',
+    approvalRequired: true,
+    deletedAt: null,
+    pausedAt: new Date('2026-01-20T00:00:00.000Z'),
+  },
+};
+
+describe('W5 kill-switch — gate verdicts (BRAND_PAUSED)', () => {
+  it('scope verdict surfaces brandPaused independently of policy', async () => {
+    const { service } = buildService({ membership: pausedMembership });
+    const scope = await service.resolveScopeForIntegration(ORG, 'int-1');
+    expect(scope.brandPaused).toEqual(true);
+    expect(scope.brandId).toEqual('brand-1');
+  });
+
+  it('scope verdict reports brandPaused false for a live brand', async () => {
+    const { service } = buildService({});
+    const scope = await service.resolveScopeForIntegration(ORG, 'int-1');
+    expect(scope.brandPaused).toEqual(false);
+  });
+
+  it('Gate A refuses a paused brand even with an APPROVED, hash-matching submission', async () => {
+    const { service } = buildService({
+      membership: pausedMembership,
+      approval: makeApproval({ state: 'APPROVED', approvedHash: batchHash }),
+    });
+    const result = await service.verifyBatchForGate(ORG, BATCH);
+    expect(result).toMatchObject({
+      scoped: true,
+      pass: false,
+      reason: 'BRAND_PAUSED',
+      brandId: 'brand-1',
+      approvalId: 'ap-1',
+      state: 'APPROVED',
+    });
+  });
+
+  it('Gate A refuses a paused brand with no submission at all', async () => {
+    const { service, repository } = buildService({
+      membership: pausedMembership,
+    });
+    repository.approvalByBatch = jest.fn(async () => null);
+    const result = await service.verifyBatchForGate(ORG, BATCH);
+    expect(result).toMatchObject({ pass: false, reason: 'BRAND_PAUSED' });
+  });
+
+  it('Gate B refuses a paused brand even when the variant hash matches', async () => {
+    const { service } = buildService({
+      membership: pausedMembership,
+      approval: makeApproval({ state: 'SCHEDULED', approvedHash: batchHash }),
+    });
+    const result = await service.verifyVariantForPublish(ORG, 'post-1');
+    expect(result).toMatchObject({
+      scoped: true,
+      pass: false,
+      reason: 'BRAND_PAUSED',
+      approvalId: 'ap-1',
+    });
+  });
+
+  it('Gate B refuses a batch-less post on a paused brand channel', async () => {
+    const batchless = makePost({ batchId: null });
+    const { service, repository } = buildService({
+      membership: pausedMembership,
+      post: batchless,
+      approval: makeApproval({ state: 'APPROVED', approvedHash: batchHash }),
+    });
+    repository.approvalByBatch = jest.fn(async () => null);
+    const result = await service.verifyVariantForPublish(ORG, 'post-1');
+    expect(result).toMatchObject({ pass: false, reason: 'BRAND_PAUSED' });
+  });
+});
+
+describe('W2 alert hooks (submit / decide)', () => {
+  it('submit resets the reminder markers and alerts reviewers', async () => {
+    const { service, alerts } = buildService({
+      approval: makeApproval({
+        state: 'DRAFT',
+        reminderSentAt: new Date('2026-01-16T00:00:00.000Z'),
+        escalatedAt: new Date('2026-01-16T00:00:00.000Z'),
+      }),
+    });
+    const result: any = await service.submit(ORG, maker, 'ap-1');
+    expect(result.state).toEqual('IN_REVIEW');
+    expect(result.reminderSentAt).toEqual(null);
+    expect(result.escalatedAt).toEqual(null);
+    expect(alerts.alertSubmissionInReview).toHaveBeenCalledWith(
+      ORG,
+      expect.objectContaining({ id: 'ap-1', state: 'IN_REVIEW' })
+    );
+  });
+
+  it('decide alerts the maker with the decision, comment and decider', async () => {
+    const { service, alerts } = buildService({});
+    await service.decide(ORG, reviewer, 'ap-1', {
+      decision: 'REQUEST_CHANGES',
+      comment: 'Fix the headline',
+    });
+    expect(alerts.alertDecision).toHaveBeenCalledWith(
+      ORG,
+      expect.objectContaining({ id: 'ap-1' }),
+      'REQUEST_CHANGES',
+      'Fix the headline',
+      'reviewer-1'
+    );
+  });
+
+  it('a failing alert never fails the decision', async () => {
+    const { service, alerts } = buildService({});
+    alerts.alertDecision = jest.fn(async () => {
+      throw new Error('smtp down');
+    });
+    const result: any = await service.decide(ORG, reviewer, 'ap-1', {
+      decision: 'APPROVE',
+    });
+    expect(result.state).toEqual('APPROVED');
   });
 });

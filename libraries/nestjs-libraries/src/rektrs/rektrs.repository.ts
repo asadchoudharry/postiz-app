@@ -211,6 +211,25 @@ export class RektrsRepository {
     });
   }
 
+  /** All enabled memberships of an org, with the user identity the alert
+   *  chain (W2) and kill-switch notices (W5) address. */
+  orgMembers(orgId: string, tx?: RektrsDb) {
+    return this.db(tx).userOrganization.findMany({
+      where: { organizationId: orgId, disabled: false },
+      include: {
+        user: { select: { id: true, email: true, name: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  userById(userId: string, tx?: RektrsDb) {
+    return this.db(tx).user.findFirst({
+      where: { id: userId },
+      select: { id: true, email: true, name: true },
+    });
+  }
+
   idempotencyKey(orgId: string, key: string, tx?: RektrsDb) {
     return this.db(tx).rektrsIdempotencyKey.findUnique({
       where: { organizationId_key: { organizationId: orgId, key } },
@@ -253,6 +272,54 @@ export class RektrsRepository {
   mediaById(orgId: string, id: string, tx?: RektrsDb) {
     return this.db(tx).media.findFirst({
       where: { id, organizationId: orgId, deletedAt: null },
+    });
+  }
+
+  // ── W5 kill-switch reads ──────────────────────────────────────────────────
+  /** Every QUEUE post on the given channels — the pull-back set of a pause. */
+  queuedPostsOfChannels(
+    orgId: string,
+    integrationIds: string[],
+    tx?: RektrsDb
+  ) {
+    if (!integrationIds.length) {
+      return Promise.resolve([]);
+    }
+    return this.db(tx).post.findMany({
+      where: {
+        organizationId: orgId,
+        integrationId: { in: integrationIds },
+        state: 'QUEUE',
+        deletedAt: null,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  brandPausedPosts(brandId: string, tx?: RektrsDb) {
+    return this.db(tx).brandPausedPost.findMany({
+      where: { brandId },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  // ── W2 reminder sweep reads ───────────────────────────────────────────────
+  /**
+   * IN_REVIEW submissions whose current round entered review at or before
+   * `cutoff`. Cross-org BY DESIGN: this feeds the SYSTEM reminder sweep,
+   * which re-scopes every notification to the row's own organizationId.
+   * The marker claim (updateMany on marker IS NULL) happens in the alerts
+   * service, so concurrent sweeps cannot double-send.
+   */
+  staleInReviewApprovals(cutoff: Date, tx?: RektrsDb) {
+    return this.db(tx).approval.findMany({
+      where: {
+        state: 'IN_REVIEW',
+        // an lte comparison never matches a NULL submittedAt
+        submittedAt: { lte: cutoff },
+      },
+      orderBy: { submittedAt: 'asc' },
+      take: 200,
     });
   }
 }

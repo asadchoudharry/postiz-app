@@ -14,6 +14,11 @@ export interface RektrsOrgSettingsView {
   allowSelfApproval: boolean;
   approvalTtlHours: number | null;
   clientApprovalEnabled: boolean;
+  // W2 alert chain (AUTOMATION-WORKFLOWS.md W2)
+  alertReminderHours: number;
+  alertEscalationHours: number;
+  alertInAppEnabled: boolean;
+  alertEmailEnabled: boolean;
 }
 
 export const REKTRS_SETTINGS_DEFAULTS: RektrsOrgSettingsView = {
@@ -21,6 +26,10 @@ export const REKTRS_SETTINGS_DEFAULTS: RektrsOrgSettingsView = {
   allowSelfApproval: false,
   approvalTtlHours: null,
   clientApprovalEnabled: false,
+  alertReminderHours: 4,
+  alertEscalationHours: 12,
+  alertInAppEnabled: true,
+  alertEmailEnabled: true,
 };
 
 /**
@@ -118,6 +127,17 @@ export class RektrsRolesService {
       allowSelfApproval: row.allowSelfApproval,
       approvalTtlHours: row.approvalTtlHours,
       clientApprovalEnabled: row.clientApprovalEnabled,
+      // `?? default` keeps pre-W2 rows (columns added by schema-step-w5.sql
+      // with DB defaults, so this is belt-and-braces) reading sanely.
+      alertReminderHours:
+        row.alertReminderHours ?? REKTRS_SETTINGS_DEFAULTS.alertReminderHours,
+      alertEscalationHours:
+        row.alertEscalationHours ??
+        REKTRS_SETTINGS_DEFAULTS.alertEscalationHours,
+      alertInAppEnabled:
+        row.alertInAppEnabled ?? REKTRS_SETTINGS_DEFAULTS.alertInAppEnabled,
+      alertEmailEnabled:
+        row.alertEmailEnabled ?? REKTRS_SETTINGS_DEFAULTS.alertEmailEnabled,
     };
   }
 

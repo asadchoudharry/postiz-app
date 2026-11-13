@@ -7,6 +7,7 @@ import {
   IsISO8601,
   IsOptional,
   IsString,
+  Max,
   Min,
 } from 'class-validator';
 
@@ -211,4 +212,31 @@ export class UpdateRektrsOrgSettingsDto {
   @IsOptional()
   @IsBoolean()
   clientApprovalEnabled?: boolean;
+
+  // W2 alert chain knobs (AUTOMATION-WORKFLOWS.md W2)
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(168)
+  alertReminderHours?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(720)
+  alertEscalationHours?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  alertInAppEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  alertEmailEnabled?: boolean;
+}
+
+export class PauseBrandDto {
+  @IsOptional()
+  @IsString()
+  reason?: string;
 }

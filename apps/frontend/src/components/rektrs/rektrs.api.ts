@@ -45,6 +45,10 @@ export interface RektrsBrand {
   colorPrimary: string | null;
   colorSecondary: string | null;
   approvalRequired: boolean;
+  /** W5 kill-switch state (AUTOMATION-WORKFLOWS.md W5). */
+  pausedAt: string | null;
+  pausedById: string | null;
+  pauseReason: string | null;
   createdById: string;
   createdAt: string;
   updatedAt: string;
@@ -176,6 +180,27 @@ export interface RektrsOrgSettings {
   allowSelfApproval: boolean;
   approvalTtlHours: number | null;
   clientApprovalEnabled: boolean;
+  /** W2 alert chain knobs (AUTOMATION-WORKFLOWS.md W2). */
+  alertReminderHours: number;
+  alertEscalationHours: number;
+  alertInAppEnabled: boolean;
+  alertEmailEnabled: boolean;
+}
+
+/** Result of POST /rektrs/v1/brands/:id/pause (W5). */
+export interface RektrsBrandPauseResult {
+  brand: RektrsBrand;
+  alreadyPaused: boolean;
+  pulledPostIds: string[];
+  pulledCount: number;
+}
+
+/** Result of POST /rektrs/v1/brands/:id/resume (W5). */
+export interface RektrsBrandResumeResult {
+  brand: RektrsBrand;
+  alreadyLive: boolean;
+  restored: string[];
+  skipped: { postId: string; reason: string; message?: string }[];
 }
 
 export interface RektrsIntegration {
@@ -228,6 +253,8 @@ const READABLE_BY_CODE: Record<string, string> = {
     'The content changed after it was approved, so it cannot be published as-is.',
   APPROVAL_EXPIRED:
     'The approval for this content has expired and needs a fresh review.',
+  BRAND_PAUSED:
+    'This brand is paused (crisis kill-switch). Its posts cannot be scheduled or published until a manager resumes the brand.',
 };
 
 export const readableRektrsError = (error: unknown, fallback: string) => {

@@ -1895,6 +1895,13 @@ model Brand {
   // or published without an APPROVED submission (design §4). Brand-level is the unit of
   // enforcement because channels belong to brands, not to campaigns.
   approvalRequired Boolean    @default(false)
+  // W5 crisis kill-switch (AUTOMATION-WORKFLOWS.md W5): while pausedAt is set, the
+  // brand's channels cannot schedule or publish (gates refuse with BRAND_PAUSED) and
+  // every QUEUE post has been pulled back to DRAFT; BrandPausedPost rows remember
+  // the pulled roots + their publish dates so a resume can restore them.
+  pausedAt       DateTime?
+  pausedById     String?
+  pauseReason    String?
   createdById    String
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
@@ -1905,6 +1912,7 @@ model Brand {
   campaigns    Campaign[]
   channels     BrandIntegration[]
   approvals    Approval[]
+  pausedPosts  BrandPausedPost[]
 
   @@unique([organizationId, slug])
   @@index([organizationId])
@@ -1925,6 +1933,26 @@ model BrandIntegration {
 
   @@index([brandId])
   @@map("rektrs_brand_integrations")
+}
+
+// W5 kill-switch snapshot: one row per QUEUE root post pulled back when a brand
+// was paused. `publishDate` is the date the post carried at pause time; resume
+// restores it and re-queues the root through Gate A. Rows are consumed (deleted)
+// by the resume that reads them — a brand that is not paused has no rows.
+model BrandPausedPost {
+  id          String   @id @default(uuid())
+  brandId     String
+  postId      String                        // → Post.id (root post of the pulled group)
+  group       String                        // Post.group of the pulled variant
+  batchId     String?                       // Post.batchId at pause time (null = batch-less)
+  publishDate DateTime                      // the date to restore on resume
+  createdAt   DateTime @default(now())
+
+  brand Brand @relation(fields: [brandId], references: [id])
+
+  @@unique([brandId, postId])
+  @@index([brandId])
+  @@map("rektrs_brand_paused_posts")
 }
 
 model Campaign {
@@ -2024,6 +2052,13 @@ model Approval {
   decision       RektrsDecision?
   approvedHash   String?                         // batch hash of the approved version set
   expiresAt      DateTime?                       // optional approval TTL (design §7, decision 3)
+  // W2 alert chain markers (AUTOMATION-WORKFLOWS.md W2): set by the reminder
+  // sweep when the 4h reminder / 12h escalation has been claimed for the
+  // current IN_REVIEW round; reset to null on every (re)submit. The claim is
+  // an updateMany on (state = IN_REVIEW, marker IS NULL), so a threshold can
+  // fire at most once per round even under concurrent sweeps.
+  reminderSentAt DateTime?
+  escalatedAt    DateTime?
   createdById    String
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
@@ -2050,7 +2085,8 @@ model ApprovalEvent {
   type       String                          // SUBMITTED | RESUBMITTED | APPROVED | CHANGES_REQUESTED |
                                              // REJECTED | INVALIDATED | SCHEDULED | RESCHEDULED |
                                              // PUBLISHED | PUBLISH_BLOCKED | CANCELLED | EXPIRED |
-                                             // COMMENTED | COMMENT_RESOLVED
+                                             // COMMENTED | COMMENT_RESOLVED |
+                                             // REVIEW_REMINDER | REVIEW_ESCALATED (W2 sweep, actorKind SYSTEM)
   actorId    String?
   actorKind  RektrsActorKind   @default(USER)
   commentId  String?                         // → Comments.id when the event is a review comment
@@ -2094,6 +2130,15 @@ model RektrsOrgSettings {
   allowSelfApproval       Boolean @default(false)  // maker-checker exception switch (design §2.2)
   approvalTtlHours        Int?                     // null = approvals do not expire (design §7, decision 3)
   clientApprovalEnabled   Boolean @default(false)  // scoped client decision tokens (design §3.2)
+  // W2 alert chain knobs (AUTOMATION-WORKFLOWS.md W2), edited in the org
+  // approval-policy UI: an IN_REVIEW submission untouched for
+  // alertReminderHours re-alerts its reviewers once; at alertEscalationHours
+  // the MANAGER holders are alerted once. Channel toggles gate the W2
+  // fan-out only (W5 kill-switch notices always send).
+  alertReminderHours      Int     @default(4)
+  alertEscalationHours    Int     @default(12)
+  alertInAppEnabled       Boolean @default(true)
+  alertEmailEnabled       Boolean @default(true)
 
   organization Organization @relation(fields: [organizationId], references: [id])
 

@@ -15,6 +15,17 @@ export class InfiniteWorkflowRegister implements OnModuleInit {
             taskQueue: 'main',
           });
       } catch (err) {}
+      try {
+        // REKTRS W2: the approval reminder/escalation sweep (hourly loop,
+        // idempotent claims — a duplicate start attempt is expected and
+        // swallowed, exactly like missingPostWorkflow above).
+        await this._temporalService.client
+          ?.getRawClient()
+          ?.workflow?.start('rektrsApprovalRemindersWorkflow', {
+            workflowId: 'rektrs-approval-reminders-workflow',
+            taskQueue: 'main',
+          });
+      } catch (err) {}
     }
   }
 }

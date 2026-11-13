@@ -14,9 +14,11 @@ import { Organization, User } from '@prisma/client';
 import { GetOrgFromRequest } from '@gitroom/nestjs-libraries/user/org.from.request';
 import { GetUserFromRequest } from '@gitroom/nestjs-libraries/user/user.from.request';
 import { RektrsCatalogService } from '@gitroom/nestjs-libraries/rektrs/rektrs.catalog.service';
+import { RektrsBrandControlService } from '@gitroom/nestjs-libraries/rektrs/rektrs.brand-control.service';
 import {
   AssignChannelDto,
   CreateBrandDto,
+  PauseBrandDto,
   UpdateBrandDto,
 } from '@gitroom/nestjs-libraries/dtos/rektrs/rektrs.dto';
 import {
@@ -30,7 +32,10 @@ import { RealIP } from 'nestjs-real-ip';
 @Controller('/rektrs/v1/brands')
 @UseGuards(RektrsFunctionsGuard)
 export class RektrsBrandsController {
-  constructor(private _catalog: RektrsCatalogService) {}
+  constructor(
+    private _catalog: RektrsCatalogService,
+    private _brandControl: RektrsBrandControlService
+  ) {}
 
   @Post('/')
   @RequireRektrsFunctions('MANAGER')
@@ -90,6 +95,35 @@ export class RektrsBrandsController {
       id,
       body.integrationId
     );
+  }
+
+  // W5 crisis kill-switch (AUTOMATION-WORKFLOWS.md W5), MANAGER only.
+  @Post('/:id/pause')
+  @RequireRektrsFunctions('MANAGER')
+  async pauseBrand(
+    @GetOrgFromRequest() org: Organization,
+    @GetUserFromRequest() user: User,
+    @Param('id') id: string,
+    @Body() body: PauseBrandDto,
+    @RealIP() ip: string
+  ) {
+    return this._brandControl.pauseBrand(
+      org.id,
+      sessionActor(user, ip),
+      id,
+      body?.reason
+    );
+  }
+
+  @Post('/:id/resume')
+  @RequireRektrsFunctions('MANAGER')
+  async resumeBrand(
+    @GetOrgFromRequest() org: Organization,
+    @GetUserFromRequest() user: User,
+    @Param('id') id: string,
+    @RealIP() ip: string
+  ) {
+    return this._brandControl.resumeBrand(org.id, sessionActor(user, ip), id);
   }
 
   @Delete('/:id/channels/:integrationId')

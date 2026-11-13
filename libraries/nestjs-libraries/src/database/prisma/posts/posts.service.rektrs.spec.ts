@@ -379,6 +379,82 @@ describe('Gate A — changePostStatus funnel (public API)', () => {
   });
 });
 
+describe('W5 kill-switch — BRAND_PAUSED at Gate A', () => {
+  it("status 'schedule' on a batch-less post of a PAUSED brand → 403 BRAND_PAUSED, state untouched", async () => {
+    const { service, repository, approvals } = makeService();
+    repository.getPostById.mockResolvedValue(
+      row({ state: 'DRAFT', batchId: null })
+    );
+    approvals.resolveScopeForIntegration.mockResolvedValue({
+      scoped: false,
+      brandId: 'brand-1',
+      brandPaused: true,
+    });
+
+    await expect(
+      service.changePostStatus(ORG, 'p1', 'schedule')
+    ).rejects.toMatchObject({ code: 'BRAND_PAUSED' });
+    expect(repository.changeState).not.toHaveBeenCalled();
+    expect(approvals.verifyBatchForGate).not.toHaveBeenCalled();
+  });
+
+  it("status 'schedule' on a batch-less post of a live brand → proceeds unscoped", async () => {
+    const { service, repository, approvals } = makeService();
+    repository.getPostById.mockResolvedValue(
+      row({ state: 'DRAFT', batchId: null })
+    );
+    approvals.resolveScopeForIntegration.mockResolvedValue({
+      scoped: false,
+      brandId: 'brand-1',
+      brandPaused: false,
+    });
+
+    const result = await service.changePostStatus(ORG, 'p1', 'schedule');
+
+    expect(result).toEqual({ id: 'p1', state: 'QUEUE' });
+    expect(repository.changeState).toHaveBeenCalledWith('p1', 'QUEUE');
+  });
+
+  it('createPost schedule with a batch-less post on a PAUSED brand → 403 BRAND_PAUSED, workflow never started, post reverted', async () => {
+    const { service, repository, approvals, startWorkflow } = makeService();
+    repository.createOrUpdatePost.mockResolvedValue({
+      posts: [row({ batchId: null })],
+    });
+    approvals.resolveScopeForIntegration.mockResolvedValue({
+      scoped: false,
+      brandId: 'brand-1',
+      brandPaused: true,
+    });
+
+    await expect(
+      service.createPost(ORG, body('schedule', [channelPost('p1')]), 'WEB' as any)
+    ).rejects.toMatchObject({ code: 'BRAND_PAUSED' });
+
+    expect(startWorkflow).not.toHaveBeenCalled();
+    expect(repository.changeState).toHaveBeenCalledWith('p1', 'DRAFT');
+  });
+
+  it('changeDate schedule with a BRAND_PAUSED verdict → 403, approval NOT invalidated, nothing dequeued', async () => {
+    const { service, repository, approvals } = makeService();
+    repository.getPostById.mockResolvedValue(row());
+    approvals.verifyBatchForGate.mockResolvedValue({
+      scoped: true,
+      pass: false,
+      reason: 'BRAND_PAUSED',
+      approvalId: 'a1',
+      state: 'APPROVED',
+    });
+
+    await expect(
+      service.changeDate(ORG, 'p1', '2030-02-01T10:00:00', 'schedule')
+    ).rejects.toMatchObject({ code: 'BRAND_PAUSED' });
+
+    expect(approvals.markUnscheduled).not.toHaveBeenCalled();
+    expect(repository.changeState).not.toHaveBeenCalled();
+    expect(repository.changeDate).not.toHaveBeenCalled();
+  });
+});
+
 describe('Delete-member hook (§4 row 10)', () => {
   it('deleting a group of an APPROVED/SCHEDULED batch → survivors dequeued after invalidation', async () => {
     const { service, repository, approvals, startWorkflow } = makeService();

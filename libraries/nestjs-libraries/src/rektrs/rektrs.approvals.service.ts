@@ -22,13 +22,19 @@ import {
   RektrsStateError,
   RektrsTransitionEvent,
 } from './rektrs.state';
-import { NotificationService } from '@gitroom/nestjs-libraries/database/prisma/notifications/notification.service';
+import { RektrsAlertsService } from './rektrs.alerts.service';
 
 export interface RektrsScopeVerdict {
   scoped: boolean;
   brandId: string | null;
   approvalRequired: boolean;
   source: 'brand' | 'org' | 'none';
+  /**
+   * W5 kill-switch: the channel's brand is currently paused. Independent of
+   * `scoped` — a paused brand blocks scheduling/publishing of ALL its posts,
+   * whether or not approval policy applies to them.
+   */
+  brandPaused: boolean;
 }
 
 export interface RektrsGateVerdict {
@@ -39,8 +45,10 @@ export interface RektrsGateVerdict {
     | 'APPROVAL_NOT_FOUND'
     | 'APPROVAL_EXPIRED'
     | 'HASH_MISMATCH'
-    | 'POST_NOT_FOUND';
+    | 'POST_NOT_FOUND'
+    | 'BRAND_PAUSED';
   approvalId?: string;
+  brandId?: string | null;
   state?: string;
   approvedHash?: string | null;
   liveHash?: string;
@@ -70,7 +78,7 @@ export class RektrsApprovalsService {
     private _repository: RektrsRepository,
     private _audit: RektrsAuditService,
     private _roles: RektrsRolesService,
-    private _notifications: NotificationService
+    private _alerts: RektrsAlertsService
   ) {}
 
   // ── Snapshot building ─────────────────────────────────────────────────────
@@ -332,6 +340,10 @@ export class RektrsApprovalsService {
           round,
           submittedById: actor.userId,
           submittedAt: new Date(),
+          // W2: a fresh IN_REVIEW round re-arms the 4h reminder / 12h
+          // escalation claims (AUTOMATION-WORKFLOWS.md W2).
+          reminderSentAt: null,
+          escalatedAt: null,
           ...(isResubmit
             ? {
                 decidedById: null,
@@ -372,10 +384,14 @@ export class RektrsApprovalsService {
       );
       return this._repository.approvalById(orgId, approvalId, tx);
     });
-    await this.notifyOrg(
-      orgId,
-      'A submission is awaiting review in REKTRS Social'
-    );
+    // W2 alert chain: reviewers (minus the maker) are alerted on in-app +
+    // email. Fire-and-forget — the alerts service never throws, and a
+    // delivery failure must never fail the submit itself.
+    await this._alerts
+      .alertSubmissionInReview(orgId, updated as Approval)
+      .catch((e) =>
+        this._logger.warn(`REKTRS submit alert failed: ${String(e)}`)
+      );
     return this.getSubmission(orgId, (updated as Approval).id);
   }
 
@@ -502,10 +518,13 @@ export class RektrsApprovalsService {
         tx
       );
     });
-    await this.notifyOrg(
-      orgId,
-      `A REKTRS Social submission was decided: ${input.decision}`
-    );
+    // W2 alert chain: the maker hears the decision (with the comment and a
+    // resubmit link for REQUEST_CHANGES / REJECT). Fire-and-forget.
+    await this._alerts
+      .alertDecision(orgId, approval, input.decision, input.comment, actor.userId)
+      .catch((e) =>
+        this._logger.warn(`REKTRS decision alert failed: ${String(e)}`)
+      );
     return this.getSubmission(orgId, approvalId);
   }
 
@@ -640,12 +659,16 @@ export class RektrsApprovalsService {
       await this._repository.brandIntegrationByIntegration(integrationId);
     const brand =
       membership && !membership.brand.deletedAt ? membership.brand : null;
+    // W5: pause state rides along on every scope verdict, independent of
+    // approval policy — both gates consult this single resolver.
+    const brandPaused = !!brand?.pausedAt;
     if (brand?.approvalRequired) {
       return {
         scoped: true,
         brandId: brand.id,
         approvalRequired: true,
         source: 'brand',
+        brandPaused,
       };
     }
     if (settings.approvalRequiredDefault) {
@@ -654,6 +677,7 @@ export class RektrsApprovalsService {
         brandId: brand?.id ?? null,
         approvalRequired: true,
         source: 'org',
+        brandPaused,
       };
     }
     return {
@@ -661,22 +685,34 @@ export class RektrsApprovalsService {
       brandId: brand?.id ?? null,
       approvalRequired: false,
       source: 'none',
+      brandPaused,
     };
   }
 
-  /** True when any channel variant of the batch is policy-scoped (design §1.5). */
+  /**
+   * Batch scope (design §1.5): scoped when any channel variant is
+   * policy-scoped; `pausedBrandId` names the first variant whose brand is
+   * under the W5 kill-switch (a batch has exactly one governing brand in
+   * practice — createSubmission enforces it — but pre-P3/legacy rows are
+   * read defensively here).
+   */
   private async batchScope(
     orgId: string,
     posts: Post[]
-  ): Promise<{ scoped: boolean }> {
+  ): Promise<{ scoped: boolean; pausedBrandId: string | null }> {
     const integrationIds = [...new Set(posts.map((p) => p.integrationId))];
+    let scoped = false;
+    let pausedBrandId: string | null = null;
     for (const integrationId of integrationIds) {
       const scope = await this.resolveScopeForIntegration(orgId, integrationId);
       if (scope.scoped) {
-        return { scoped: true };
+        scoped = true;
+      }
+      if (scope.brandPaused && !pausedBrandId) {
+        pausedBrandId = scope.brandId;
       }
     }
-    return { scoped: false };
+    return { scoped, pausedBrandId };
   }
 
   /**
@@ -694,10 +730,7 @@ export class RektrsApprovalsService {
     if (!posts.length) {
       return { scoped: false, pass: true };
     }
-    const { scoped } = await this.batchScope(orgId, posts);
-    if (!scoped) {
-      return { scoped: false, pass: true };
-    }
+    const { scoped, pausedBrandId } = await this.batchScope(orgId, posts);
     const liveHash = computeBatchHash(
       batchId,
       snapshots.map((s) => ({
@@ -706,6 +739,25 @@ export class RektrsApprovalsService {
       }))
     );
     const approval = await this._repository.approvalByBatch(orgId, batchId);
+    if (pausedBrandId) {
+      // W5 kill-switch outranks every approval state — even an APPROVED
+      // submission may not schedule while its brand is paused. The verdict
+      // still carries the approval's state so the unschedule bookkeeping
+      // (SCHEDULED → APPROVED) keeps working during the pause itself.
+      return {
+        scoped: true,
+        pass: false,
+        reason: 'BRAND_PAUSED',
+        brandId: pausedBrandId,
+        approvalId: approval?.id,
+        state: approval?.state,
+        approvedHash: approval?.approvedHash,
+        liveHash,
+      };
+    }
+    if (!scoped) {
+      return { scoped: false, pass: true };
+    }
     if (!approval) {
       return {
         scoped: true,
@@ -761,10 +813,27 @@ export class RektrsApprovalsService {
     if (!post) {
       return { scoped: false, pass: false, reason: 'POST_NOT_FOUND' };
     }
+    const scope = await this.resolveScopeForIntegration(orgId, post.integrationId);
+    if (scope.brandPaused) {
+      // W5 kill-switch at publish time (Gate B): fail closed even for a
+      // post that was already QUEUE when the pause landed (a schedule that
+      // raced the pause, an in-flight workflow restarted by the sweep).
+      const approval = post.batchId
+        ? await this._repository.approvalByBatch(orgId, post.batchId)
+        : null;
+      return {
+        scoped: true,
+        pass: false,
+        reason: 'BRAND_PAUSED',
+        brandId: scope.brandId,
+        approvalId: approval?.id,
+        state: approval?.state,
+        approvedHash: approval?.approvedHash,
+      };
+    }
     if (!post.batchId) {
       return { scoped: false, pass: true };
     }
-    const scope = await this.resolveScopeForIntegration(orgId, post.integrationId);
     if (!scope.scoped) {
       return { scoped: false, pass: true };
     }
@@ -942,18 +1011,5 @@ export class RektrsApprovalsService {
       );
     });
     return this.getSubmission(orgId, approvalId);
-  }
-
-  private async notifyOrg(orgId: string, message: string) {
-    try {
-      await this._notifications.inAppNotification(
-        orgId,
-        'REKTRS Social approvals',
-        message,
-        false
-      );
-    } catch (e) {
-      this._logger.warn(`REKTRS notification failed: ${String(e)}`);
-    }
   }
 }
