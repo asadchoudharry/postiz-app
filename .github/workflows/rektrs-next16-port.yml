@@ -4,6 +4,9 @@ on:
     paths:
       - 'apps/frontend/**'
       - 'scripts/rektrs-next16-port.test.mjs'
+      - 'scripts/rektrs-social-safe-start.test.mjs'
+      - 'scripts/rektrs-social-start.sh'
+      - 'Dockerfile.rektrs'
       - 'scripts/ui/rektrs-next16-review.test.cjs'
       - '.github/workflows/rektrs-next16-port.yml'
       - '.env.example'
@@ -24,7 +27,7 @@ jobs:
         with:
           node-version: '22.20.0'
       - name: Pure editorial and integration regressions
-        run: node --experimental-strip-types --test scripts/rektrs-next16-port.test.mjs
+        run: node --experimental-strip-types --test scripts/rektrs-next16-port.test.mjs scripts/rektrs-social-safe-start.test.mjs
   frontend-build:
     runs-on: ubuntu-latest
     timeout-minutes: 40
