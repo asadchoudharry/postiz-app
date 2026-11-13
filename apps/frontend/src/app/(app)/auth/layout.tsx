@@ -14,6 +14,7 @@ export default async function AuthLayout({
   children: ReactNode;
 }) {
   const t = await getT();
+  const rektrsSocial = process.env.NEXT_PUBLIC_REKTRS_SOCIAL_BRAND === 'true';
 
   return (
     <MantineWrapper>
@@ -28,13 +29,27 @@ export default async function AuthLayout({
           </div>
         </div>
         <div className="text-[36px] flex-1 pt-[88px] hidden lg:flex flex-col items-center">
-          <div className="text-center">
-            Over <span className="text-[42px] text-[#FC69FF]">20,000+</span>{' '}
-            Entrepreneurs use
-            <br />
-            Postiz To Grow Their Social Presence
-          </div>
-          <TestimonialComponent />
+          {rektrsSocial ? (
+            <div className="max-w-[600px] px-7 text-center">
+              <div className="text-[42px] font-semibold tracking-tight text-white">REKTRS <span className="text-[#B19BFF]">Social</span></div>
+              <p className="mt-5 text-[21px] leading-relaxed text-[#C5C1D1]">
+                Plan, review and schedule your social content in one workspace.
+              </p>
+              <p className="mt-4 text-sm text-[#ACA6BD]">
+                Built on Postiz. Publishing and account permissions remain under your control.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="text-center">
+                Over <span className="text-[42px] text-[#FC69FF]">20,000+</span>{' '}
+                Entrepreneurs use
+                <br />
+                Postiz To Grow Their Social Presence
+              </div>
+              <TestimonialComponent />
+            </>
+          )}
         </div>
       </div>
     </MantineWrapper>

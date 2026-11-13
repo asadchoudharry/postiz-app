@@ -1,0 +1,51 @@
+name: rektrs social Next 16 source port
+on:
+  pull_request:
+    paths:
+      - 'apps/frontend/**'
+      - 'scripts/rektrs-next16-port.test.mjs'
+      - '.github/workflows/rektrs-next16-port.yml'
+      - '.env.example'
+      - 'docs/rektrs-social/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: rektrs-next16-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  editorial-and-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.20.0'
+      - name: Pure editorial and integration regressions
+        run: node --experimental-strip-types --test scripts/rektrs-next16-port.test.mjs
+  frontend-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      FRONTEND_URL: 'http://localhost:4200'
+      NEXT_PUBLIC_BACKEND_URL: 'http://localhost:3000'
+      NEXT_PUBLIC_REKTRS_SOCIAL_BRAND: 'true'
+      NEXT_PUBLIC_REKTRS_CONTENT_REVIEW: 'true'
+      DATABASE_URL: 'postgresql://build:build@127.0.0.1:5432/build'
+      STORAGE_PROVIDER: 'local'
+      IS_GENERAL: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.6.1'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.20.0'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm run prisma-generate
+      - run: pnpm run build:frontend
+# No image upload, database mutation, provider call or deployment is performed.

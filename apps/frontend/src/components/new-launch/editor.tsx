@@ -67,6 +67,7 @@ import {
   DelayIcon,
 } from '@gitroom/frontend/components/ui/icons';
 import { DelayComponent } from '@gitroom/frontend/components/new-launch/delay.component';
+import { RektrsContentReview } from '@gitroom/frontend/components/rektrs-social/content-review';
 
 const MAX_UPLOAD_SIZE = 1024 * 1024 * 1024; // 1 GB
 
@@ -521,6 +522,14 @@ export const EditorWrapper: FC<{
           </div>
         </div>
       ))}
+      {process.env.NEXT_PUBLIC_REKTRS_CONTENT_REVIEW === 'true' && canEdit && (
+        <div className="w-full min-w-0 p-3">
+          <RektrsContentReview
+            contents={items.map((post) => post.content)}
+            channelCount={selectedIntegration.length}
+          />
+        </div>
+      )}
     </div>
   );
 };

@@ -157,6 +157,13 @@ export function Login() {
                     {t('forgot_password', 'Forgot password')}
                   </Link>
                 </p>
+                {process.env.NEXT_PUBLIC_REKTRS_SOCIAL_BRAND === 'true' && (
+                  <p className="mt-6 text-xs leading-relaxed text-[#B6BAC7]">
+                    <Link href="https://rektrs.com/social/" className="underline hover:text-white">About REKTRS Social</Link>
+                    <span aria-hidden="true"> {' · '} </span>
+                    <Link href="https://rektrs.com/privacy-policy/" className="underline hover:text-white">Privacy Policy</Link>
+                  </p>
+                )}
               </div>
             </div>
           </div>
