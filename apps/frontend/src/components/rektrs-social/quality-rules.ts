@@ -1,14 +1,14 @@
 /** Convert TipTap rich text to human-readable review text without rendering HTML. */
 export function normalizeReviewText(value: string): string {
   if (typeof value !== 'string') return '';
-  if (!/<\\/?[a-z][^>]*>/iu.test(value)) return value;
+  if (!/<\/?[a-z][^>]*>/iu.test(value)) return value;
   const named: Record<string, string> = {
     amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ',
   };
   return value
-    .replace(/<(script|style)\\b[^>]*>[\\s\\S]*?<\\/\\1\\s*>/giu, ' ')
-    .replace(/<br\\s*\\/?>/giu, '\\n')
-    .replace(/<\\/(?:p|div|li|h[1-6])\\s*>/giu, '\\n')
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/giu, ' ')
+    .replace(/<br\s*\/?>/giu, '\n')
+    .replace(/<\/(?:p|div|li|h[1-6])\s*>/giu, '\n')
     .replace(/<[^>]*>/gu, '')
     .replace(/&(#x[0-9a-f]+|#[0-9]+|amp|lt|gt|quot|apos|nbsp);/giu, (_, entity: string) => {
       const lower = entity.toLowerCase();
@@ -19,7 +19,7 @@ export function normalizeReviewText(value: string): string {
         (codepoint < 0xd800 || codepoint > 0xdfff)
         ? String.fromCodePoint(codepoint) : ' ';
     })
-    .replace(/[ \\t]+/gu, ' ')
+    .replace(/[ \t]+/gu, ' ')
     .trim();
 }
 
