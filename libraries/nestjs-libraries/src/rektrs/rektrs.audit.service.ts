@@ -16,7 +16,10 @@ export interface RektrsAuditWrite {
     | 'LeadRule'
     | 'EvergreenSettings'
     | 'EvergreenRun'
-    | 'EvergreenCopy';
+    | 'EvergreenCopy'
+    | 'MilestoneCtaSettings'
+    | 'MilestoneCtaRun'
+    | 'MilestoneCtaAction';
   entityId: string;
   beforeHash?: string;
   afterHash?: string;

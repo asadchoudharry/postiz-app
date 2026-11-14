@@ -375,6 +375,36 @@ export class UpdateEvergreenSettingsDto {
   hookLines?: string[];
 }
 
+/**
+ * W4 — the per-brand milestone auto-CTA configuration
+ * (AUTOMATION-WORKFLOWS.md W4). ctaText / ctaUrl are display text —
+ * stored trimmed, posted verbatim as the first comment (the URL is NOT
+ * shortened until the P5 first-comment shortener lands). The service
+ * additionally refuses enabling with neither text nor URL
+ * (CTA_CONTENT_REQUIRED) and a non-http(s) URL (CTA_URL_INVALID).
+ */
+export class UpdateMilestoneCtaSettingsDto {
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(1000000)
+  likeThreshold?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  ctaText?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  ctaUrl?: string;
+}
+
 export class PauseBrandDto {
   @IsOptional()
   @IsString()

@@ -17,6 +17,7 @@ export * from './missing.post.workflow';
 export * from './rektrs.reminders.workflow';
 export * from './rektrs.leads.workflow';
 export * from './rektrs.evergreen.workflow';
+export * from './rektrs.milestone-cta.workflow';
 export * from './send.email.workflow';
 export * from './refresh.token.workflow';
 export * from './streak.workflow';

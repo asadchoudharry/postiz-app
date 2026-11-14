@@ -22,6 +22,10 @@ import {
   RektrsEvergreenSettings,
   RektrsEvergreenStyleMode,
   RektrsLeadRule,
+  RektrsMilestoneCtaAction,
+  RektrsMilestoneCtaActivity,
+  RektrsMilestoneCtaRunResult,
+  RektrsMilestoneCtaSettings,
   shortId,
   slugifyClient,
   useRektrsCall,
@@ -909,6 +913,353 @@ const BrandEvergreen: FC<{ brand: RektrsBrand }> = ({ brand }) => {
   );
 };
 
+/**
+ * W4 — the brand's Milestone Auto-CTA settings + activity
+ * (AUTOMATION-WORKFLOWS.md W4). Lives inside the brand edit modal next to
+ * the evergreen recycler. When a published post (last 30 days) crosses
+ * the like threshold, the CTA below is posted as a first comment — once
+ * per post. Channels that cannot post comments (e.g. YouTube, TikTok)
+ * are skipped and the run history says so. MANAGER configures and runs.
+ */
+const BrandMilestoneCta: FC<{ brand: RektrsBrand }> = ({ brand }) => {
+  const t = useT();
+  const call = useRektrsCall();
+  const load = useRektrsLoader();
+  const toaster = useToaster();
+  const canManage = useHasRektrsFunction('MANAGER');
+  const canCreator = useHasRektrsFunction('CREATOR');
+  const canAnalyst = useHasRektrsFunction('ANALYST');
+  const canViewActivity = canManage || canCreator || canAnalyst;
+  const { data: settings, mutate } = useSWR<RektrsMilestoneCtaSettings>(
+    `/rektrs/v1/brands/${brand.id}/milestone-cta`,
+    load,
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      refreshWhenHidden: false,
+      refreshWhenOffline: false,
+    }
+  );
+  const { data: activity, mutate: mutateActivity } =
+    useSWR<RektrsMilestoneCtaActivity>(
+      canViewActivity
+        ? `/rektrs/v1/brands/${brand.id}/milestone-cta/activity`
+        : null,
+      load,
+      {
+        revalidateOnFocus: false,
+        revalidateOnReconnect: false,
+        refreshWhenHidden: false,
+        refreshWhenOffline: false,
+      }
+    );
+  const [enabled, setEnabled] = useState(false);
+  const [likeThreshold, setLikeThreshold] = useState('20');
+  const [ctaText, setCtaText] = useState('');
+  const [ctaUrl, setCtaUrl] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (settings) {
+      setEnabled(settings.enabled);
+      setLikeThreshold(String(settings.likeThreshold));
+      setCtaText(settings.ctaText);
+      setCtaUrl(settings.ctaUrl);
+    }
+  }, [settings]);
+
+  const save = useCallback(async () => {
+    const threshold = Number.parseInt(likeThreshold, 10);
+    if (!Number.isFinite(threshold) || threshold < 1 || threshold > 1000000) {
+      setError(
+        t(
+          'rektrs_milestone_cta_threshold_invalid',
+          'The like threshold must be between 1 and 1,000,000.'
+        )
+      );
+      return;
+    }
+    const url = ctaUrl.trim();
+    if (url && !/^https?:\/\//i.test(url)) {
+      setError(
+        t(
+          'rektrs_milestone_cta_url_invalid',
+          'The CTA link must start with http:// or https://.'
+        )
+      );
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      await call(`/rektrs/v1/brands/${brand.id}/milestone-cta`, {
+        method: 'PUT',
+        ifMatch: settings?.version ?? undefined,
+        body: {
+          enabled,
+          likeThreshold: threshold,
+          ctaText: ctaText.trim(),
+          ctaUrl: url,
+        },
+      });
+      await mutate();
+      toaster.show(
+        t('rektrs_milestone_cta_saved', 'Milestone auto-CTA saved'),
+        'success'
+      );
+    } catch (e) {
+      setError(
+        readableRektrsError(
+          e,
+          t('rektrs_milestone_cta_save_failed', 'Could not save the milestone auto-CTA')
+        )
+      );
+    } finally {
+      setSaving(false);
+    }
+  }, [brand.id, call, ctaText, ctaUrl, enabled, likeThreshold, mutate, settings?.version, t, toaster]);
+
+  const runNow = useCallback(async () => {
+    setRunning(true);
+    setError('');
+    try {
+      const result = await call<RektrsMilestoneCtaRunResult>(
+        `/rektrs/v1/brands/${brand.id}/milestone-cta/run`,
+        { method: 'POST' }
+      );
+      await mutateActivity();
+      toaster.show(
+        result.postedCount > 0
+          ? t(
+              'rektrs_milestone_cta_run_done',
+              'Milestone CTA run finished: {{posted}} CTA comment(s) posted',
+              { posted: String(result.postedCount) }
+            )
+          : t(
+              'rektrs_milestone_cta_run_empty',
+              'Milestone CTA run finished: no post crossed the threshold this time (see run history)'
+            ),
+        'success'
+      );
+    } catch (e) {
+      setError(
+        readableRektrsError(
+          e,
+          t('rektrs_milestone_cta_run_failed', 'The milestone CTA run could not be started')
+        )
+      );
+    } finally {
+      setRunning(false);
+    }
+  }, [brand.id, call, mutateActivity, t, toaster]);
+
+  if (!settings) {
+    return null;
+  }
+
+  const fieldLabel = 'text-[14px] font-[500]';
+  const fieldHint = 'text-[12px] opacity-60';
+  const inputCls =
+    'bg-newBgColorInner border border-newTableBorder rounded-[8px] px-[16px] py-[10px] text-[14px] outline-none w-full disabled:opacity-50';
+
+  const statusBadge = (status: RektrsMilestoneCtaAction['status']) =>
+    status === 'CTA_POSTED'
+      ? 'bg-emerald-500/15 text-emerald-500'
+      : status === 'CTA_FAILED'
+        ? 'bg-amber-500/15 text-amber-500'
+        : 'bg-red-500/15 text-red-400';
+  const statusLabel = (status: RektrsMilestoneCtaAction['status']) =>
+    status === 'CTA_POSTED'
+      ? t('rektrs_milestone_cta_status_posted', 'Posted')
+      : status === 'CTA_FAILED'
+        ? t('rektrs_milestone_cta_status_failed', 'Failed — will retry')
+        : t('rektrs_milestone_cta_status_exhausted', 'Failed — retries exhausted');
+
+  return (
+    <div className="flex flex-col gap-[10px]">
+      <div className="flex items-start justify-between gap-[16px]">
+        <div className="flex flex-col gap-[2px]">
+          <div className="text-[14px] font-[600]">
+            {t('rektrs_milestone_cta', 'Milestone auto-CTA')}
+          </div>
+          <div className="text-[12px] opacity-60 max-w-[520px]">
+            {t(
+              'rektrs_milestone_cta_hint',
+              'Checked hourly: when one of this brand’s posts from the last 30 days reaches the like threshold, the CTA below is posted as a first comment — once per post, never twice. Channels that cannot post comments (YouTube, TikTok) are skipped and the run history says so.'
+            )}
+          </div>
+        </div>
+        <button
+          type="button"
+          disabled={!canManage}
+          onClick={() => setEnabled(!enabled)}
+          className={clsx(
+            'relative w-[42px] h-[24px] rounded-full shrink-0 transition-colors',
+            enabled ? 'bg-[#612bd3]' : 'bg-gray-400/40',
+            !canManage && 'opacity-50 cursor-not-allowed'
+          )}
+          aria-pressed={enabled}
+        >
+          <span
+            className={clsx(
+              'absolute top-[3px] w-[18px] h-[18px] rounded-full bg-white transition-all',
+              enabled ? 'start-[21px]' : 'start-[3px]'
+            )}
+          />
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-[12px]">
+        <div className="flex flex-col gap-[6px] w-[160px]">
+          <div className={fieldLabel}>
+            {t('rektrs_milestone_cta_threshold', 'Like threshold')}
+          </div>
+          <input
+            type="number"
+            min={1}
+            max={1000000}
+            className={inputCls}
+            disabled={!canManage}
+            value={likeThreshold}
+            onChange={(e) => setLikeThreshold(e.target.value)}
+          />
+        </div>
+        <div className="flex flex-col gap-[6px] flex-1 min-w-[220px]">
+          <div className={fieldLabel}>
+            {t('rektrs_milestone_cta_url', 'CTA link')}
+          </div>
+          <input
+            type="url"
+            className={inputCls}
+            disabled={!canManage}
+            value={ctaUrl}
+            onChange={(e) => setCtaUrl(e.target.value)}
+            placeholder="https://example.com/guide"
+          />
+        </div>
+      </div>
+      <div className="flex flex-col gap-[6px]">
+        <div className={fieldLabel}>
+          {t('rektrs_milestone_cta_text', 'CTA text')}
+        </div>
+        <input
+          type="text"
+          className={inputCls}
+          disabled={!canManage}
+          value={ctaText}
+          onChange={(e) => setCtaText(e.target.value)}
+          placeholder={t(
+            'rektrs_milestone_cta_text_placeholder',
+            'Loved this? Get the full guide here:'
+          )}
+        />
+        <div className={fieldHint}>
+          {t(
+            'rektrs_milestone_cta_text_hint',
+            'The comment is the CTA text followed by the link, posted exactly as written (links are not shortened yet).'
+          )}
+        </div>
+      </div>
+      {error ? <div className="text-red-400 text-[13px]">{error}</div> : null}
+      {canManage ? (
+        <div className="flex justify-end gap-[10px]">
+          <Button
+            type="button"
+            secondary
+            loading={running}
+            disabled={!settings.enabled}
+            onClick={runNow}
+          >
+            {t('rektrs_milestone_cta_run_now', 'Run now')}
+          </Button>
+          <Button type="button" secondary loading={saving} onClick={save}>
+            {t('rektrs_milestone_cta_save', 'Save milestone auto-CTA')}
+          </Button>
+        </div>
+      ) : null}
+      {canViewActivity && activity && activity.actions.length ? (
+        <div className="flex flex-col gap-[6px]">
+          <div className={fieldLabel}>
+            {t('rektrs_milestone_cta_actions', 'CTA activity')}
+          </div>
+          <div className="flex flex-col divide-y divide-newTableBorder border border-newTableBorder rounded-[8px]">
+            {activity.actions.slice(0, 10).map((action) => (
+              <div
+                key={action.id}
+                className="flex flex-wrap items-center gap-x-[10px] gap-y-[2px] px-[12px] py-[8px] text-[12px]"
+              >
+                <span
+                  className={clsx(
+                    'inline-flex rounded-full px-[8px] py-[2px] text-[11px] font-[600]',
+                    statusBadge(action.status)
+                  )}
+                >
+                  {statusLabel(action.status)}
+                </span>
+                <span className="opacity-70">
+                  {shortId(action.postId)} · {action.providerIdentifier}
+                </span>
+                <span className="opacity-70">
+                  {t('rektrs_milestone_cta_action_meta', '♥ {{likes}} at check · attempt {{attempts}}', {
+                    likes: action.likesAtCheck === null ? '—' : String(action.likesAtCheck),
+                    attempts: String(action.attempts),
+                  })}
+                </span>
+                <span className="ms-auto opacity-50">
+                  {formatDateTime(action.postedAt || action.updatedAt)}
+                </span>
+                {action.error ? (
+                  <div className="w-full text-red-400/80 truncate">
+                    {action.error}
+                  </div>
+                ) : (
+                  <div className="w-full opacity-60 truncate">
+                    “{action.commentText}”
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {canViewActivity && activity && activity.runs.length ? (
+        <div className="flex flex-col gap-[6px]">
+          <div className={fieldLabel}>
+            {t('rektrs_milestone_cta_runs', 'Run history')}
+          </div>
+          <div className="flex flex-col gap-[4px] text-[12px] opacity-80">
+            {activity.runs.slice(0, 5).map((run) => (
+              <div key={run.id} className="flex flex-wrap gap-x-[10px]">
+                <span>{formatDateTime(run.startedAt)}</span>
+                <span>
+                  {run.trigger === 'MANUAL'
+                    ? t('rektrs_milestone_cta_trigger_manual', 'Manual')
+                    : t('rektrs_milestone_cta_trigger_scheduled', 'Scheduled')}
+                </span>
+                <span>
+                  {t('rektrs_milestone_cta_run_summary', 'scanned {{scanned}} · posted {{posted}}', {
+                    scanned: String(run.scannedCount),
+                    posted: String(run.postedCount),
+                  })}
+                </span>
+                {run.skippedReasons &&
+                Object.keys(run.skippedReasons.counts).length ? (
+                  <span className="opacity-60">
+                    {Object.entries(run.skippedReasons.counts)
+                      .map(([reason, n]) => `${reason} ×${n}`)
+                      .join(' · ')}
+                  </span>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
 const BrandFormModal: FC<{
   brand: RektrsBrand | null;
   onSaved: () => void;
@@ -1097,6 +1448,7 @@ const BrandFormModal: FC<{
           <BrandChannels brand={liveBrand} />
           <BrandLeadAutomation brand={liveBrand} />
           <BrandEvergreen brand={liveBrand} />
+          <BrandMilestoneCta brand={liveBrand} />
         </div>
       ) : null}
     </div>

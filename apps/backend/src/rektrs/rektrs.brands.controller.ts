@@ -18,6 +18,7 @@ import { RektrsCatalogService } from '@gitroom/nestjs-libraries/rektrs/rektrs.ca
 import { RektrsBrandControlService } from '@gitroom/nestjs-libraries/rektrs/rektrs.brand-control.service';
 import { RektrsLeadsService } from '@gitroom/nestjs-libraries/rektrs/rektrs.leads.service';
 import { RektrsEvergreenService } from '@gitroom/nestjs-libraries/rektrs/rektrs.evergreen.service';
+import { RektrsMilestoneCtaService } from '@gitroom/nestjs-libraries/rektrs/rektrs.milestone-cta.service';
 import {
   AssignChannelDto,
   CreateBrandDto,
@@ -25,6 +26,7 @@ import {
   UpdateBrandDto,
   UpdateEvergreenSettingsDto,
   UpdateLeadRuleDto,
+  UpdateMilestoneCtaSettingsDto,
 } from '@gitroom/nestjs-libraries/dtos/rektrs/rektrs.dto';
 import {
   RektrsFunctionsGuard,
@@ -45,7 +47,8 @@ export class RektrsBrandsController {
     private _catalog: RektrsCatalogService,
     private _brandControl: RektrsBrandControlService,
     private _leads: RektrsLeadsService,
-    private _evergreen: RektrsEvergreenService
+    private _evergreen: RektrsEvergreenService,
+    private _milestoneCta: RektrsMilestoneCtaService
   ) {}
 
   @Post('/')
@@ -211,6 +214,54 @@ export class RektrsBrandsController {
     @RealIP() ip: string
   ) {
     return this._evergreen.runBrandNow(org.id, sessionActor(user, ip), id);
+  }
+
+  // ── W4 milestone auto-CTA: per-brand configuration, actions, runs ───────
+  @Get('/:id/milestone-cta')
+  async getMilestoneCtaSettings(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string
+  ) {
+    return this._milestoneCta.getCtaSettings(org.id, id);
+  }
+
+  @Put('/:id/milestone-cta')
+  @RequireRektrsFunctions('MANAGER')
+  async updateMilestoneCtaSettings(
+    @GetOrgFromRequest() org: Organization,
+    @GetUserFromRequest() user: User,
+    @Param('id') id: string,
+    @Body() body: UpdateMilestoneCtaSettingsDto,
+    @Headers('if-match') ifMatch: string,
+    @RealIP() ip: string
+  ) {
+    return this._milestoneCta.updateCtaSettings(
+      org.id,
+      sessionActor(user, ip),
+      id,
+      body,
+      parseIfMatch(ifMatch)
+    );
+  }
+
+  @Get('/:id/milestone-cta/activity')
+  @RequireRektrsFunctions('MANAGER', 'CREATOR', 'ANALYST')
+  async listMilestoneCtaActivity(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string
+  ) {
+    return this._milestoneCta.listCtaActivity(org.id, id);
+  }
+
+  @Post('/:id/milestone-cta/run')
+  @RequireRektrsFunctions('MANAGER')
+  async runMilestoneCta(
+    @GetOrgFromRequest() org: Organization,
+    @GetUserFromRequest() user: User,
+    @Param('id') id: string,
+    @RealIP() ip: string
+  ) {
+    return this._milestoneCta.runBrandNow(org.id, sessionActor(user, ip), id);
   }
 
   @Delete('/:id/channels/:integrationId')

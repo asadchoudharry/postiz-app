@@ -3,6 +3,7 @@ import { Activity, ActivityMethod } from 'nestjs-temporal-core';
 import { RektrsAlertsService } from '@gitroom/nestjs-libraries/rektrs/rektrs.alerts.service';
 import { RektrsLeadsService } from '@gitroom/nestjs-libraries/rektrs/rektrs.leads.service';
 import { RektrsEvergreenService } from '@gitroom/nestjs-libraries/rektrs/rektrs.evergreen.service';
+import { RektrsMilestoneCtaService } from '@gitroom/nestjs-libraries/rektrs/rektrs.milestone-cta.service';
 
 /**
  * REKTRS W2 — orchestrator face of the approval alert chain. The reminder /
@@ -16,6 +17,10 @@ import { RektrsEvergreenService } from '@gitroom/nestjs-libraries/rektrs/rektrs.
  * W3 joins as well: the evergreen recycler's weekly sweep
  * (RektrsEvergreenService.scanAllEnabled), driven by
  * rektrsEvergreenWorkflow.
+ *
+ * W4 joins too: the milestone auto-CTA hourly sweep
+ * (RektrsMilestoneCtaService.scanAllEnabled), driven by
+ * rektrsMilestoneCtaWorkflow.
  */
 @Injectable()
 @Activity()
@@ -23,7 +28,8 @@ export class RektrsActivity {
   constructor(
     private _rektrsAlertsService: RektrsAlertsService,
     private _rektrsLeadsService: RektrsLeadsService,
-    private _rektrsEvergreenService: RektrsEvergreenService
+    private _rektrsEvergreenService: RektrsEvergreenService,
+    private _rektrsMilestoneCtaService: RektrsMilestoneCtaService
   ) {}
 
   @ActivityMethod()
@@ -47,5 +53,10 @@ export class RektrsActivity {
   @ActivityMethod()
   async scanRektrsEvergreen() {
     return this._rektrsEvergreenService.scanAllEnabled();
+  }
+
+  @ActivityMethod()
+  async scanRektrsMilestoneCta() {
+    return this._rektrsMilestoneCtaService.scanAllEnabled();
   }
 }

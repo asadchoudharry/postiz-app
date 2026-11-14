@@ -48,6 +48,8 @@ import { RektrsLeadsService } from '@gitroom/nestjs-libraries/rektrs/rektrs.lead
 import { RektrsCommentGateway } from '@gitroom/nestjs-libraries/rektrs/rektrs.lead-providers';
 import { RektrsEvergreenService } from '@gitroom/nestjs-libraries/rektrs/rektrs.evergreen.service';
 import { RektrsEngagementGateway } from '@gitroom/nestjs-libraries/rektrs/rektrs.evergreen-providers';
+import { RektrsMilestoneCtaService } from '@gitroom/nestjs-libraries/rektrs/rektrs.milestone-cta.service';
+import { RektrsCtaCommentGateway } from '@gitroom/nestjs-libraries/rektrs/rektrs.milestone-cta-providers';
 import { SetsRepository } from '@gitroom/nestjs-libraries/database/prisma/sets/sets.repository';
 import { ThirdPartyRepository } from '@gitroom/nestjs-libraries/database/prisma/third-party/third-party.repository';
 import { ThirdPartyService } from '@gitroom/nestjs-libraries/database/prisma/third-party/third-party.service';
@@ -122,6 +124,8 @@ import { AdminStatsService } from '@gitroom/nestjs-libraries/database/prisma/adm
     RektrsCommentGateway,
     RektrsEvergreenService,
     RektrsEngagementGateway,
+    RektrsMilestoneCtaService,
+    RektrsCtaCommentGateway,
     ThirdPartyRepository,
     ThirdPartyService,
     OAuthRepository,

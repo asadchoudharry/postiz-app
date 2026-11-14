@@ -54,6 +54,9 @@ model Organization {
   rektrsEvergreenSettings EvergreenSettings[]
   rektrsEvergreenRuns     EvergreenRun[]
   rektrsEvergreenCopies   EvergreenCopy[]
+  rektrsMilestoneCtaSettings MilestoneCtaSettings[]
+  rektrsMilestoneCtaRuns     MilestoneCtaRun[]
+  rektrsMilestoneCtaActions  MilestoneCtaAction[]
 
   @@index([apiKey])
   @@index([streakSince])
@@ -1923,6 +1926,9 @@ model Brand {
   evergreenSettings EvergreenSettings?
   evergreenRuns     EvergreenRun[]
   evergreenCopies   EvergreenCopy[]
+  milestoneCtaSettings MilestoneCtaSettings?
+  milestoneCtaRuns     MilestoneCtaRun[]
+  milestoneCtaActions  MilestoneCtaAction[]
 
   @@unique([organizationId, slug])
   @@index([organizationId])
@@ -2378,4 +2384,103 @@ model EvergreenCopy {
   @@index([sourcePostId])
   @@index([copyPostId])
   @@map("rektrs_evergreen_copies")
+}
+
+// ── REKTRS W4 — Milestone Auto-CTA (AUTOMATION-WORKFLOWS.md W4) ─────────────
+// When a brand's PUBLISHED post crosses the brand's like threshold
+// (default 20), the brand's configured CTA is posted as a first comment
+// on that post — once per post, fully audited. Engagement is measured
+// live at scan time (the W3 gateway; no stored metrics layer until P6)
+// and the CTA link is posted verbatim — the first-comment shortener is
+// a P5 item (see the marked hook in rektrs.milestone-cta.ts). All
+// tables additive, rektrs_* mapped.
+
+// One milestone-CTA configuration per brand (the EvergreenSettings
+// pattern). Enabling requires ctaText and/or ctaUrl (CTA_CONTENT_REQUIRED)
+// and an http(s) ctaUrl (CTA_URL_INVALID) — enforced at the service layer.
+model MilestoneCtaSettings {
+  id             String   @id @default(uuid())
+  organizationId String
+  brandId        String   @unique          // one configuration per brand
+  enabled        Boolean  @default(false)
+  likeThreshold  Int      @default(20)
+  ctaText        String   @default("")
+  ctaUrl         String   @default("")
+  createdById    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  version        Int      @default(1)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  brand        Brand        @relation(fields: [brandId], references: [id])
+
+  @@index([organizationId])
+  @@map("rektrs_milestone_cta_settings")
+}
+
+// One row per scan of one brand (scheduled or manual). skippedReasons is
+// the run's honest account of what was NOT acted on and why:
+// { counts: { [reason]: n }, entries: [{ postId, reason }] (≤ 50) } with
+// reasons NO_CHANNELS | CHANNEL_UNSUPPORTED | POST_MISSING |
+// METRICS_FETCH_FAILED | NO_METRICS | BELOW_THRESHOLD |
+// PROVIDER_COMMENT_UNSUPPORTED | ALREADY_POSTED | RETRY_EXHAUSTED.
+model MilestoneCtaRun {
+  id             String    @id @default(uuid())
+  organizationId String
+  brandId        String
+  trigger        String                        // SCHEDULED | MANUAL
+  startedAt      DateTime  @default(now())
+  finishedAt     DateTime?
+  scannedCount   Int       @default(0)
+  postedCount    Int       @default(0)
+  skippedReasons Json?
+  createdAt      DateTime  @default(now())
+
+  organization Organization        @relation(fields: [organizationId], references: [id])
+  brand        Brand               @relation(fields: [brandId], references: [id])
+  actions      MilestoneCtaAction[]
+
+  @@index([organizationId])
+  @@index([brandId])
+  @@index([startedAt])
+  @@map("rektrs_milestone_cta_runs")
+}
+
+// The dedupe + audit record: AT MOST one row per (brand, post), ever —
+// the unique index is the once-only guarantee. A CTA_POSTED row is
+// terminal (the CTA is never posted twice on a post). A failed attempt
+// is recorded CTA_FAILED with the provider error and retried on later
+// cycles; when attempts reach the cap (3) the row turns CTA_EXHAUSTED
+// and the engine stops trying. commentText is the EXACT text attempted
+// (and, on success, posted); likesAtCheck is the measured like count of
+// the latest evaluation — never an invented number.
+model MilestoneCtaAction {
+  id                 String    @id @default(uuid())
+  organizationId     String
+  brandId            String
+  runId              String                        // the run that FIRST recorded this post
+  postId             String                        // → Post.id (the published root)
+  integrationId      String                        // the post's channel at scan time
+  providerIdentifier String
+  status             String                        // CTA_POSTED | CTA_FAILED | CTA_EXHAUSTED
+  attempts           Int       @default(0)
+  likesAtCheck       Int?
+  commentText        String
+  commentId          String?                       // provider comment id (success only)
+  error              String?                       // last provider error (failures)
+  postedAt           DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  organization Organization    @relation(fields: [organizationId], references: [id])
+  brand        Brand           @relation(fields: [brandId], references: [id])
+  run          MilestoneCtaRun @relation(fields: [runId], references: [id])
+
+  // Once per post per brand, ever — the dedupe guarantee.
+  @@unique([brandId, postId])
+  @@index([organizationId])
+  @@index([brandId])
+  @@index([postId])
+  @@index([status])
+  @@map("rektrs_milestone_cta_actions")
 }

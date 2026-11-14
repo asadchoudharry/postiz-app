@@ -47,6 +47,17 @@ export class InfiniteWorkflowRegister implements OnModuleInit {
             taskQueue: 'main',
           });
       } catch (err) {}
+      try {
+        // REKTRS W4: the milestone auto-CTA driver (hourly sweep; the
+        // once-only dedupe + attempt caps live in the sweep — same
+        // duplicate-start contract).
+        await this._temporalService.client
+          ?.getRawClient()
+          ?.workflow?.start('rektrsMilestoneCtaWorkflow', {
+            workflowId: 'rektrs-milestone-cta-workflow',
+            taskQueue: 'main',
+          });
+      } catch (err) {}
     }
   }
 }

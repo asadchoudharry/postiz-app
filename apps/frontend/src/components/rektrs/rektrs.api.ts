@@ -325,6 +325,78 @@ export interface RektrsEvergreenRunResult {
   }[];
 }
 
+/** W4: the per-brand milestone auto-CTA configuration. */
+export interface RektrsMilestoneCtaSettings {
+  brandId: string;
+  enabled: boolean;
+  likeThreshold: number;
+  ctaText: string;
+  ctaUrl: string;
+  version: number | null;
+}
+
+export interface RektrsMilestoneCtaAction {
+  id: string;
+  organizationId: string;
+  brandId: string;
+  runId: string;
+  postId: string;
+  integrationId: string;
+  providerIdentifier: string;
+  status: 'CTA_POSTED' | 'CTA_FAILED' | 'CTA_EXHAUSTED';
+  attempts: number;
+  likesAtCheck: number | null;
+  commentText: string;
+  commentId: string | null;
+  error: string | null;
+  postedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RektrsMilestoneCtaRun {
+  id: string;
+  organizationId: string;
+  brandId: string;
+  trigger: 'SCHEDULED' | 'MANUAL';
+  startedAt: string;
+  finishedAt: string | null;
+  scannedCount: number;
+  postedCount: number;
+  skippedReasons: {
+    counts: Record<string, number>;
+    entries: { postId?: string; reason: string }[];
+  } | null;
+  createdAt: string;
+}
+
+export interface RektrsMilestoneCtaActivity {
+  actions: RektrsMilestoneCtaAction[];
+  runs: RektrsMilestoneCtaRun[];
+}
+
+/** Result of POST /rektrs/v1/brands/:id/milestone-cta/run (W4). */
+export interface RektrsMilestoneCtaRunResult {
+  runId: string | null;
+  brandId: string;
+  trigger: 'SCHEDULED' | 'MANUAL';
+  skipped?: string;
+  scannedCount: number;
+  postedCount: number;
+  failedCount: number;
+  skippedReasons: {
+    counts: Record<string, number>;
+    entries: { postId?: string; reason: string }[];
+  };
+  actions: {
+    postId: string;
+    status: 'CTA_POSTED' | 'CTA_FAILED' | 'CTA_EXHAUSTED';
+    commentId: string | null;
+    likes: number | null;
+    attempts: number;
+  }[];
+}
+
 /** Result of POST /rektrs/v1/org/crm-webhook/test (W1). */
 export interface RektrsCrmWebhookTestResult {
   ok: boolean;
@@ -415,6 +487,11 @@ const READABLE_BY_CODE: Record<string, string> = {
     'Add at least one hook line before enabling the HOOK style.',
   EVERGREEN_NOT_ENABLED:
     'Enable the evergreen recycler for this brand before running it.',
+  MILESTONE_CTA_NOT_ENABLED:
+    'Enable the milestone auto-CTA for this brand before running it.',
+  CTA_CONTENT_REQUIRED:
+    'Write the CTA text or add a CTA link before enabling the milestone auto-CTA.',
+  CTA_URL_INVALID: 'The CTA link must be a valid http(s) URL.',
 };
 
 export const readableRektrsError = (error: unknown, fallback: string) => {

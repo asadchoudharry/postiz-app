@@ -529,6 +529,91 @@ export class RektrsRepository {
     return this.db(tx).tagsPosts.findMany({ where: { postId } });
   }
 
+  // ── W4 milestone auto-CTA ─────────────────────────────────────────────────
+  milestoneCtaSettingsByBrand(orgId: string, brandId: string, tx?: RektrsDb) {
+    return this.db(tx).milestoneCtaSettings.findFirst({
+      where: { brandId, organizationId: orgId },
+    });
+  }
+
+  /** All enabled milestone-CTA configurations with their brand channels —
+   *  the hourly sweep's work list (mirrors enabledEvergreenSettings). */
+  enabledMilestoneCtaSettings(tx?: RektrsDb) {
+    return this.db(tx).milestoneCtaSettings.findMany({
+      where: { enabled: true },
+      include: {
+        brand: {
+          include: { channels: { include: { integration: true } } },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  /**
+   * Candidate pool for one brand scan: PUBLISHED root posts on the brand's
+   * channels published AT OR AFTER `since` (the 30-day scan window) that
+   * carry a provider release id (no release id = the provider never
+   * confirmed the post; it cannot be measured or commented on). Capped at
+   * 100, most recent first — the cap mirrors the W3 residual.
+   */
+  milestoneCtaCandidates(
+    orgId: string,
+    integrationIds: string[],
+    since: Date,
+    tx?: RektrsDb
+  ) {
+    if (!integrationIds.length) {
+      return Promise.resolve([]);
+    }
+    return this.db(tx).post.findMany({
+      where: {
+        organizationId: orgId,
+        integrationId: { in: integrationIds },
+        state: 'PUBLISHED',
+        parentPostId: null,
+        releaseId: { not: null },
+        publishDate: { gte: since },
+        deletedAt: null,
+      },
+      orderBy: { publishDate: 'desc' },
+      take: 100,
+    });
+  }
+
+  /** The dedupe row of one post (at most one per brand+post, ever). */
+  milestoneCtaActionForPost(brandId: string, postId: string, tx?: RektrsDb) {
+    return this.db(tx).milestoneCtaAction.findFirst({
+      where: { brandId, postId },
+    });
+  }
+
+  milestoneCtaActionsOfBrand(
+    orgId: string,
+    brandId: string,
+    take = 50,
+    tx?: RektrsDb
+  ) {
+    return this.db(tx).milestoneCtaAction.findMany({
+      where: { organizationId: orgId, brandId },
+      orderBy: { updatedAt: 'desc' },
+      take: Math.min(Math.max(take, 1), 200),
+    });
+  }
+
+  milestoneCtaRunsOfBrand(
+    orgId: string,
+    brandId: string,
+    take = 20,
+    tx?: RektrsDb
+  ) {
+    return this.db(tx).milestoneCtaRun.findMany({
+      where: { organizationId: orgId, brandId },
+      orderBy: { startedAt: 'desc' },
+      take: Math.min(Math.max(take, 1), 100),
+    });
+  }
+
   // ── W2 reminder sweep reads ───────────────────────────────────────────────
   /**
    * IN_REVIEW submissions whose current round entered review at or before
