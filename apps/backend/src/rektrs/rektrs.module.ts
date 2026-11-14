@@ -1,0 +1,54 @@
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { AuthMiddleware } from '@gitroom/backend/services/auth/auth.middleware';
+import { RektrsBrandsController } from '@gitroom/backend/rektrs/rektrs.brands.controller';
+import { RektrsCampaignsController } from '@gitroom/backend/rektrs/rektrs.campaigns.controller';
+import {
+  RektrsReviewController,
+  RektrsSubmissionsController,
+} from '@gitroom/backend/rektrs/rektrs.submissions.controller';
+import {
+  RektrsAuditController,
+  RektrsOrgController,
+} from '@gitroom/backend/rektrs/rektrs.org.controller';
+import { RektrsLeadsController } from '@gitroom/backend/rektrs/rektrs.leads.controller';
+import { RektrsInboxController } from '@gitroom/backend/rektrs/rektrs.inbox.controller';
+import { RektrsMetaWebhookController } from '@gitroom/backend/rektrs/rektrs.meta.webhook.controller';
+import { RektrsWordpressWebhookController } from '@gitroom/backend/rektrs/rektrs.wordpress.webhook.controller';
+import { RektrsFunctionsGuard } from '@gitroom/backend/rektrs/rektrs.functions.guard';
+
+const rektrsControllers = [
+  RektrsBrandsController,
+  RektrsCampaignsController,
+  RektrsSubmissionsController,
+  RektrsReviewController,
+  RektrsOrgController,
+  RektrsAuditController,
+  RektrsLeadsController,
+  RektrsInboxController,
+];
+
+/**
+ * REKTRS P3 HTTP surface (design P3-1 §3.1): mounts beside ApiModule under
+ * the same /api prefix (the frontend proxy maps /api/rektrs/v1/* here),
+ * reuses the session AuthMiddleware and @GetOrgFromRequest /
+ * @GetUserFromRequest resolution — the org is never a request parameter.
+ * Domain services live in @gitroom/nestjs-libraries (global DatabaseModule).
+ */
+@Module({
+  imports: [],
+  // The webhook receivers are registered as controllers but kept OUT of
+  // rektrsControllers on purpose: AuthMiddleware applies only to that
+  // list, and Meta / WordPress authenticate by HMAC signature, not by
+  // session (Meta: app secret env; WordPress: per-brand secret).
+  controllers: [
+    ...rektrsControllers,
+    RektrsMetaWebhookController,
+    RektrsWordpressWebhookController,
+  ],
+  providers: [AuthMiddleware, RektrsFunctionsGuard],
+})
+export class RektrsModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(AuthMiddleware).forRoutes(...rektrsControllers);
+  }
+}

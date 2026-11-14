@@ -4,6 +4,7 @@ import {
   PendingCheckResponse,
   PostDetails,
   PostResponse,
+  ProviderPostComment,
   SocialProvider,
 } from '@gitroom/nestjs-libraries/integrations/social/social.integrations.interface';
 import { makeSecureId } from '@gitroom/nestjs-libraries/services/make.secure.id';
@@ -20,6 +21,7 @@ import { Integration } from '@prisma/client';
 import { Rules } from '@gitroom/nestjs-libraries/chat/rules.description.decorator';
 import { META_GRAPH_API_VERSION } from '@gitroom/nestjs-libraries/integrations/social/facebook.provider';
 import { Tool } from '@gitroom/nestjs-libraries/integrations/tool.decorator';
+import { DashboardFunction } from '@gitroom/nestjs-libraries/integrations/dashboard.function.decorator';
 import { hasExtension } from '@gitroom/helpers/utils/has.extension';
 
 @Rules(
@@ -120,6 +122,13 @@ export class InstagramProvider
         value: "This account doesn't support Trial Reels",
       };
     }
+    if (body.indexOf('2207078') > -1) {
+      return {
+        type: 'bad-body' as const,
+        value:
+          'Instagram Trial Reel publish limit reached for this account, please try again later or publish the post as a regular Reel',
+      };
+    }
 
     if (
       body.indexOf('REVOKED_ACCESS_TOKEN') > -1 ||
@@ -182,13 +191,14 @@ export class InstagramProvider
     if (body.indexOf('2207053') > -1) {
       return {
         type: 'bad-body' as const,
-        value: 'Unknown upload error, please try again',
+        value:
+          "Instagram failed to upload the video. If it exceeds Instagram's limits (300MB, 1920px width, 25Mbps bitrate), export a smaller version and try again",
       };
     }
 
     if (body.indexOf('2207052') > -1) {
       return {
-        type: 'bad-body' as const,
+        type: 'retry' as const,
         value: 'Media fetch failed, please try again',
       };
     }
@@ -375,6 +385,14 @@ export class InstagramProvider
       };
     }
 
+    if (body.indexOf('1772107') > -1) {
+      return {
+        type: 'bad-body' as const,
+        value:
+          'Instagram did not add the comment, the post itself was published. Please try again with different comment text',
+      };
+    }
+
     if (body.indexOf('2207082') > -1) {
       return {
         type: 'retry' as const,
@@ -409,6 +427,14 @@ export class InstagramProvider
       return {
         type: 'bad-body' as const,
         value: 'Unknown error, please try again later or contact support',
+      };
+    }
+
+    if (body.indexOf('2207018') > -1) {
+      return {
+        type: 'bad-body' as const,
+        value:
+          "One of the collaborators could not be tagged, please check the username is correct, the account is public, and that it allows collaborator invites",
       };
     }
 
@@ -519,6 +545,7 @@ export class InstagramProvider
     };
   }
 
+  @DashboardFunction()
   async pages(token: string) {
     const [accessToken, userToken] = token.split('___');
     const seenPageIds = new Set<string>();
@@ -666,7 +693,9 @@ export class InstagramProvider
         this.identifier,
         JSON.stringify({ status_code, status }),
         '{}',
-        handleError?.value || status || 'Instagram could not process the media'
+        handleError?.value ||
+          (status !== status_code && status) ||
+          'Instagram could not process the media'
       );
     }
 
@@ -1106,6 +1135,80 @@ export class InstagramProvider
         status: 'success',
       },
     ];
+  }
+
+  /**
+   * REKTRS W1 (SocialProviderComments): newest-first comments on one
+   * published media. `type` mirrors comment()'s host switch (graph.facebook
+   * .com for FB-Login accounts, graph.instagram.com for IG-Login ones).
+   */
+  async getPostComments(
+    postId: string,
+    accessToken: string,
+    integration: Integration,
+    type = 'graph.facebook.com'
+  ): Promise<ProviderPostComment[]> {
+    const [primaryToken] = accessToken.split('___');
+
+    const { data, error } = await (
+      await this.fetch(
+        `https://${type}/${META_GRAPH_API_VERSION}/${postId}/comments?fields=id,text,username,timestamp,from{id,username}`,
+        { headers: { Authorization: `Bearer ${primaryToken}` } },
+        'get post comments'
+      )
+    ).json();
+
+    if (error) {
+      throw new Error(error.message || 'Instagram comments fetch failed');
+    }
+
+    return (data || []).map((c: any) => ({
+      id: String(c.id),
+      text: c.text || '',
+      commenterId: String(c.from?.id || ''),
+      commenterName: c.from?.username || c.username || undefined,
+      createdAt: c.timestamp || undefined,
+    }));
+  }
+
+  /**
+   * REKTRS W1 (SocialProviderComments): private reply to a comment via the
+   * Instagram messaging endpoint — the message lands in the commenter's DM
+   * inbox (Send API with a comment_id recipient), nothing is posted
+   * publicly. Meta allows one private reply per comment.
+   */
+  async sendCommentPrivateReply(
+    commentId: string,
+    message: string,
+    accessToken: string,
+    integration: Integration,
+    type = 'graph.facebook.com'
+  ): Promise<{ messageId?: string }> {
+    const [primaryToken] = accessToken.split('___');
+
+    const data = await (
+      await this.fetch(
+        `https://${type}/${META_GRAPH_API_VERSION}/${integration.internalId}/messages`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${primaryToken}`,
+          },
+          body: JSON.stringify({
+            recipient: { comment_id: commentId },
+            message: { text: message },
+          }),
+        },
+        'send private reply'
+      )
+    ).json();
+
+    if (data?.error) {
+      throw new Error(data.error.message || 'Instagram private reply failed');
+    }
+
+    return { messageId: data?.message_id ? String(data.message_id) : undefined };
   }
 
   private setTitle(name: string) {

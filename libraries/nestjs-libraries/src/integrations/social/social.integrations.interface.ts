@@ -37,8 +37,20 @@ export interface IAuthenticator {
   resolveReleaseId?(
     accessToken: string,
     releaseId: string,
+    integration: Integration,
+    settings: any,
+    releaseURL: string
+  ): Promise<
+    | { postId: string; releaseURL: string }
+    | { pending: true }
+    | { unavailable: true }
+    | undefined
+  >; // Final id + URL to persist when the stored releaseId is still a publish id, pending when the platform has no final id yet, unavailable when the post will never get one, undefined when nothing to resolve
+  releaseUrl?(
+    accessToken: string,
+    releaseId: string,
     integration: Integration
-  ): Promise<{ postId: string; releaseURL: string } | undefined>; // Final id + URL to persist when the stored releaseId is still a publish id, undefined when nothing to resolve (yet)
+  ): Promise<string | undefined>; // URL of a post the user connected by hand
   changeNickname?(
     id: string,
     accessToken: string,
@@ -119,6 +131,41 @@ export type PostResponse = {
   pendingData?: any; // Opaque provider state used by checkPostStatus / finalizePost, never inspected by generic code
 };
 
+/**
+ * REKTRS W1 — one comment on a published post, normalised across providers.
+ * Only providers that can READ comments on their own posts and answer a
+ * comment with a private message implement `SocialProviderComments`
+ * (Facebook Page + Instagram today); callers feature-detect the methods.
+ */
+export interface ProviderPostComment {
+  id: string; // provider comment id
+  text: string;
+  commenterId: string; // provider user id of the commenter
+  commenterName?: string; // handle / display name as the provider exposes it
+  createdAt?: string; // ISO timestamp as the provider reports it
+}
+
+export interface SocialProviderComments {
+  /** Newest-first comments on one published post (provider post/media id). */
+  getPostComments(
+    postId: string,
+    accessToken: string,
+    integration: Integration
+  ): Promise<ProviderPostComment[]>;
+
+  /**
+   * The comment-to-DM primitive: send `message` to the author of the given
+   * comment as a private message (Meta "private reply" semantics — the
+   * provider opens the conversation; it is not a public reply).
+   */
+  sendCommentPrivateReply(
+    commentId: string,
+    message: string,
+    accessToken: string,
+    integration: Integration
+  ): Promise<{ messageId?: string }>;
+}
+
 // Returned by checkPostStatus / finalizePost:
 // 'pending' - the platform is still processing, poll again later
 // 'ready' - processing is done, the workflow must call finalizePost to run the remaining mutations
@@ -172,6 +219,7 @@ export interface SocialProvider
   convertToJPEG?: boolean;
   stripLinks?: () => boolean;
   refreshCron?: boolean;
+  refreshErrorMessage?(err: any): string | undefined;
   dto?: any;
   maxLength: (additionalSettings?: any, settings?: any) => number;
   checkValidity(
@@ -197,6 +245,7 @@ export interface SocialProvider
   isChromeExtension?: boolean;
   extensionCookies?: { name: string; domain: string }[];
   editor: 'none' | 'normal' | 'markdown' | 'html';
+  inlineImages?: (settings?: any) => boolean;
   customFields?: () => Promise<
     {
       key: string;

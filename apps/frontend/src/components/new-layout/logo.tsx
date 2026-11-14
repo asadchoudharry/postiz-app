@@ -1,6 +1,15 @@
 'use client';
 
 export const Logo = () => {
+  if (process.env.NEXT_PUBLIC_REKTRS_SOCIAL_BRAND === 'true') {
+    return (
+      <img
+        src="/brand/mark.svg"
+        alt="REKTRS Social"
+        className="mt-[8px] min-w-[60px] min-h-[60px] w-[60px] h-[60px] rounded-[14px]"
+      />
+    );
+  }
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"

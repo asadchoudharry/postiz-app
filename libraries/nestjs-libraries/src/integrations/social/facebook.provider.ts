@@ -4,6 +4,7 @@ import {
   PendingCheckResponse,
   PostDetails,
   PostResponse,
+  ProviderPostComment,
   SocialProvider,
 } from '@gitroom/nestjs-libraries/integrations/social/social.integrations.interface';
 import { makeSecureId } from '@gitroom/nestjs-libraries/services/make.secure.id';
@@ -22,6 +23,7 @@ import { Integration } from '@prisma/client';
 import { hasExtension } from '@gitroom/helpers/utils/has.extension';
 import { timer } from '@gitroom/helpers/utils/timer';
 import { Rules } from '@gitroom/nestjs-libraries/chat/rules.description.decorator';
+import { DashboardFunction } from '@gitroom/nestjs-libraries/integrations/dashboard.function.decorator';
 
 export const META_GRAPH_API_VERSION = 'v25.0';
 
@@ -93,7 +95,7 @@ export class FacebookProvider extends SocialAbstract implements SocialProvider {
       return {
         type: 'refresh-token' as const,
         value:
-          'Postiz is not authorized to publish as this page, please reconnect the channel',
+          'REKTRS Social is not authorized to publish as this page, please reconnect the channel',
       };
     }
 
@@ -389,6 +391,7 @@ export class FacebookProvider extends SocialAbstract implements SocialProvider {
     };
   }
 
+  @DashboardFunction()
   async pages(accessToken: string) {
     const seenIds = new Set<string>();
     const allPages: any[] = [];
@@ -1024,6 +1027,72 @@ export class FacebookProvider extends SocialAbstract implements SocialProvider {
     ];
   }
 
+  /**
+   * REKTRS W1 (SocialProviderComments): newest-first comments on one
+   * published Page post. Comment replies are included by the Graph API in
+   * the same edge; the caller dedupes by comment id.
+   */
+  async getPostComments(
+    postId: string,
+    accessToken: string,
+    integration: Integration
+  ): Promise<ProviderPostComment[]> {
+    const { data, error } = await (
+      await this.fetch(
+        `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${postId}/comments?fields=id,message,from{id,name},created_time&order=reverse_chronological&limit=100`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+        'get post comments'
+      )
+    ).json();
+
+    if (error) {
+      throw new Error(error.message || 'Facebook comments fetch failed');
+    }
+
+    return (data || []).map((c: any) => ({
+      id: String(c.id),
+      text: c.message || '',
+      commenterId: String(c.from?.id || ''),
+      commenterName: c.from?.name || undefined,
+      createdAt: c.created_time || undefined,
+    }));
+  }
+
+  /**
+   * REKTRS W1 (SocialProviderComments): Meta private reply — sends
+   * `message` to the comment's author as a private message (the page opens
+   * a Messenger conversation; nothing is posted publicly). One private
+   * reply per comment is a platform rule, which is exactly the W1
+   * once-per-commenter guarantee's provider-side twin.
+   */
+  async sendCommentPrivateReply(
+    commentId: string,
+    message: string,
+    accessToken: string,
+    integration: Integration
+  ): Promise<{ messageId?: string }> {
+    const data = await (
+      await this.fetch(
+        `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${commentId}/private_replies`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ message }),
+        },
+        'send private reply'
+      )
+    ).json();
+
+    if (data?.error) {
+      throw new Error(data.error.message || 'Facebook private reply failed');
+    }
+
+    return { messageId: data?.id ? String(data.id) : undefined };
+  }
+
   async analytics(
     id: string,
     accessToken: string,
@@ -1185,9 +1254,11 @@ export class FacebookProvider extends SocialAbstract implements SocialProvider {
   ): Promise<AnalyticsData[]> {
     try {
       // Metric names verified against the Graph API v23.0 video_insights docs:
-      //   - total_video_impressions: times the video was shown
       //   - total_video_views: 3s+ (or full, if shorter) plays
       //   - total_video_reactions_by_type_total: reactions object, keyed by type
+      // total_video_impressions is no longer accepted (Graph answers
+      // "The value must be a valid insights metric", which fails the whole
+      // request), so it is not requested.
       // Reels never return the total_video_* metrics (the edge answers with an
       // empty data array), only the reels ones, so both sets are requested at
       // once and Graph simply omits the metrics that don't apply:
@@ -1198,7 +1269,7 @@ export class FacebookProvider extends SocialAbstract implements SocialProvider {
       // response doesn't throw an ApplicationFailure — we want a quiet `[]` instead.
       const { data, error } = await (
         await fetch(
-          `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${videoId}/video_insights?metric=total_video_impressions,total_video_views,total_video_reactions_by_type_total,fb_reels_total_plays,post_video_likes_by_reaction_type,post_video_social_actions&access_token=${accessToken}`
+          `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${videoId}/video_insights?metric=total_video_views,total_video_reactions_by_type_total,fb_reels_total_plays,post_video_likes_by_reaction_type,post_video_social_actions&access_token=${accessToken}`
         )
       ).json();
 
@@ -1228,10 +1299,6 @@ export class FacebookProvider extends SocialAbstract implements SocialProvider {
         let total = '';
 
         switch (metric.name) {
-          case 'total_video_impressions':
-            label = 'Impressions';
-            total = String(value);
-            break;
           case 'total_video_views':
             label = 'Views';
             total = String(value);

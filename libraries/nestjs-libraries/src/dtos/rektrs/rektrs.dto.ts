@@ -1,0 +1,551 @@
+import { Type } from 'class-transformer';
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsBoolean,
+  IsDefined,
+  IsIn,
+  IsInt,
+  IsISO8601,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+  ValidateIf,
+} from 'class-validator';
+
+export class CreateBrandDto {
+  @IsString()
+  @IsDefined()
+  name: string;
+
+  @IsOptional()
+  @IsString()
+  slug?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsString()
+  logoMediaId?: string;
+
+  @IsOptional()
+  @IsString()
+  colorPrimary?: string;
+
+  @IsOptional()
+  @IsString()
+  colorSecondary?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  approvalRequired?: boolean;
+}
+
+export class UpdateBrandDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string | null;
+
+  @IsOptional()
+  @IsString()
+  logoMediaId?: string | null;
+
+  @IsOptional()
+  @IsString()
+  colorPrimary?: string | null;
+
+  @IsOptional()
+  @IsString()
+  colorSecondary?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  approvalRequired?: boolean;
+}
+
+export class AssignChannelDto {
+  @IsString()
+  @IsDefined()
+  integrationId: string;
+}
+
+export class CreateCampaignDto {
+  @IsString()
+  @IsDefined()
+  brandId: string;
+
+  @IsString()
+  @IsDefined()
+  name: string;
+
+  @IsOptional()
+  @IsString()
+  objective?: string;
+
+  @IsOptional()
+  @IsISO8601()
+  startsAt?: string;
+
+  @IsOptional()
+  @IsISO8601()
+  endsAt?: string;
+
+  @IsOptional()
+  @IsString()
+  ownerId?: string;
+}
+
+export class UpdateCampaignDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  objective?: string | null;
+
+  @IsOptional()
+  @IsIn(['ACTIVE', 'PAUSED', 'COMPLETED', 'ARCHIVED'])
+  status?: string;
+
+  @IsOptional()
+  @IsISO8601()
+  startsAt?: string | null;
+
+  @IsOptional()
+  @IsISO8601()
+  endsAt?: string | null;
+
+  @IsOptional()
+  @IsString()
+  ownerId?: string;
+}
+
+export class UpsertBriefDto {
+  @IsString()
+  @IsDefined()
+  objective: string;
+
+  @IsOptional()
+  @IsString()
+  audience?: string;
+
+  @IsOptional()
+  @IsString()
+  keyMessages?: string;
+
+  @IsOptional()
+  @IsString()
+  mandatoryIncludes?: string;
+
+  @IsOptional()
+  @IsString()
+  prohibitedTerms?: string;
+
+  @IsOptional()
+  @IsString()
+  tone?: string;
+
+  @IsOptional()
+  @IsString()
+  references?: string;
+
+  @IsOptional()
+  @IsString()
+  assigneeId?: string;
+
+  @IsOptional()
+  @IsISO8601()
+  dueAt?: string;
+}
+
+export class CreateSubmissionDto {
+  @IsString()
+  @IsDefined()
+  batchId: string;
+
+  @IsOptional()
+  @IsString()
+  campaignId?: string;
+}
+
+export class DecideSubmissionDto {
+  @IsDefined()
+  @IsIn(['APPROVE', 'REQUEST_CHANGES', 'REJECT'])
+  decision: 'APPROVE' | 'REQUEST_CHANGES' | 'REJECT';
+
+  @IsOptional()
+  @IsString()
+  comment?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  expectedVersion?: number;
+}
+
+export class UpdateMemberFunctionsDto {
+  @IsArray()
+  @IsString({ each: true })
+  @IsDefined()
+  functions: string[];
+}
+
+export class UpdateRektrsOrgSettingsDto {
+  @IsOptional()
+  @IsBoolean()
+  approvalRequiredDefault?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  allowSelfApproval?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  approvalTtlHours?: number | null;
+
+  @IsOptional()
+  @IsBoolean()
+  clientApprovalEnabled?: boolean;
+
+  // W2 alert chain knobs (AUTOMATION-WORKFLOWS.md W2)
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(168)
+  alertReminderHours?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(720)
+  alertEscalationHours?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  alertInAppEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  alertEmailEnabled?: boolean;
+
+  // W1 — CRM webhook (Operqon-first; the endpoint is an org setting, never
+  // hardcoded). URL safety (public HTTPS) is enforced in the service via
+  // isSafePublicHttpsUrl; the secret is write-only (min length in service).
+  @IsOptional()
+  @ValidateIf((o) => o.crmWebhookUrl !== null)
+  @IsString()
+  @MaxLength(2048)
+  crmWebhookUrl?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  crmWebhookEnabled?: boolean;
+
+  @IsOptional()
+  @ValidateIf((o) => o.crmWebhookSecret !== null)
+  @IsString()
+  @MaxLength(512)
+  crmWebhookSecret?: string | null;
+
+  /** Convenience for the settings UI: clear the stored secret. */
+  @IsOptional()
+  @IsBoolean()
+  clearCrmWebhookSecret?: boolean;
+
+  // W3 — evergreen recycler schedule: the weekly scan runs when the UTC
+  // weekday (0 = Sunday … 6 = Saturday) and hour match.
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(6)
+  evergreenWeekday?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(23)
+  evergreenHour?: number;
+}
+
+/**
+ * W1 — the per-brand lead automation rule (AUTOMATION-WORKFLOWS.md W1).
+ * keywords/guardWords are phrase lists (normalised server-side); the DM
+ * template supports {{name}} / {{keyword}} / {{link}} placeholders.
+ */
+export class UpdateLeadRuleDto {
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  @MaxLength(100, { each: true })
+  keywords?: string[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  dmTemplate?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  @MaxLength(100, { each: true })
+  guardWords?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  useDefaultGuardWords?: boolean;
+}
+
+export const REKTRS_LEAD_STATUSES = [
+  'HUMAN_REVIEW',
+  'DM_PENDING',
+  'DM_SENT',
+  'DM_FAILED',
+  'WEBHOOK_PENDING',
+  'WEBHOOK_FAILED',
+  'COMPLETE',
+  'HANDLED',
+] as const;
+
+export class ListLeadsQueryDto {
+  @IsOptional()
+  @IsIn(REKTRS_LEAD_STATUSES as unknown as string[])
+  status?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  brandId?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  take?: number;
+}
+
+/**
+ * W3 — the per-brand evergreen recycler configuration
+ * (AUTOMATION-WORKFLOWS.md W3). styleMode: VERBATIM (exact copy) |
+ * HOOK (prepend a rotating hook line) | ROTATE (alternate the two).
+ * hookLines are display text — stored verbatim, prepended verbatim.
+ */
+export class UpdateEvergreenSettingsDto {
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(3650)
+  minAgeDays?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(10)
+  topN?: number;
+
+  @IsOptional()
+  @IsIn(['VERBATIM', 'HOOK', 'ROTATE'])
+  styleMode?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @MaxLength(200, { each: true })
+  hookLines?: string[];
+}
+
+/**
+ * W4 — the per-brand milestone auto-CTA configuration
+ * (AUTOMATION-WORKFLOWS.md W4). ctaText / ctaUrl are display text —
+ * stored trimmed, posted verbatim as the first comment (the URL is NOT
+ * shortened until the P5 first-comment shortener lands). The service
+ * additionally refuses enabling with neither text nor URL
+ * (CTA_CONTENT_REQUIRED) and a non-http(s) URL (CTA_URL_INVALID).
+ */
+export class UpdateMilestoneCtaSettingsDto {
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(1000000)
+  likeThreshold?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  ctaText?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  ctaUrl?: string;
+}
+
+/**
+ * W6 — the per-brand inbox triage configuration (AUTOMATION-WORKFLOWS.md
+ * W6). workingLanguage: en | ur | ar | ur-Latn. The faq* fields are reply
+ * templates with {brandName} / {name} placeholders, stored verbatim.
+ * extraComplaintKeywords are added to the built-in complaint lexicon.
+ */
+export class UpdateInboxSettingsDto {
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @IsOptional()
+  @IsIn(['en', 'ur', 'ar', 'ur-Latn'])
+  workingLanguage?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  faqPrice?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  faqTiming?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  faqLocation?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  faqDelivery?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  @MaxLength(100, { each: true })
+  extraComplaintKeywords?: string[];
+}
+
+export const REKTRS_INBOX_STATUSES = [
+  'NEW',
+  'QUEUED',
+  'DRAFTED',
+  'SENT',
+  'DISMISSED',
+] as const;
+
+export const REKTRS_INBOX_CATEGORIES = [
+  'COMPLAINT',
+  'FAQ_PRICE',
+  'FAQ_TIMING',
+  'FAQ_LOCATION',
+  'FAQ_DELIVERY',
+  'GENERAL',
+] as const;
+
+export class ListInboxItemsQueryDto {
+  @IsOptional()
+  @IsIn(REKTRS_INBOX_STATUSES as unknown as string[])
+  status?: string;
+
+  @IsOptional()
+  @IsIn(REKTRS_INBOX_CATEGORIES as unknown as string[])
+  category?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  brandId?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  take?: number;
+}
+
+/** W6 — one-tap send of a drafted reply; an optional edited text wins
+ *  over the stored draft (the sent text is recorded on the item). */
+export class SendInboxReplyDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  text?: string;
+}
+
+export class PauseBrandDto {
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
+
+/**
+ * W7 — the per-brand blog → social chain configuration
+ * (AUTOMATION-WORKFLOWS.md W7). Deliberately NO webhookSecret field: the
+ * secret is set only by the rotate action (which returns the new value
+ * once) and is never accepted or echoed through settings writes — the
+ * W1 write-only secret posture. The voice fields are W7's minimal voice
+ * block (P4 brand memory supersedes them later).
+ */
+export class UpdateBlogChainSettingsDto {
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  aiEnabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  voiceTone?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  voiceNotes?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  examplePost?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  utmSource?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  utmMedium?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  firstCommentTemplate?: string;
+}

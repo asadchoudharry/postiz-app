@@ -15,6 +15,49 @@ export class InfiniteWorkflowRegister implements OnModuleInit {
             taskQueue: 'main',
           });
       } catch (err) {}
+      try {
+        // REKTRS W2: the approval reminder/escalation sweep (hourly loop,
+        // idempotent claims — a duplicate start attempt is expected and
+        // swallowed, exactly like missingPostWorkflow above).
+        await this._temporalService.client
+          ?.getRawClient()
+          ?.workflow?.start('rektrsApprovalRemindersWorkflow', {
+            workflowId: 'rektrs-approval-reminders-workflow',
+            taskQueue: 'main',
+          });
+      } catch (err) {}
+      try {
+        // REKTRS W1: the lead-machine driver (hourly comment poll sync +
+        // CRM webhook retry sweep — same duplicate-start contract).
+        await this._temporalService.client
+          ?.getRawClient()
+          ?.workflow?.start('rektrsLeadsWorkflow', {
+            workflowId: 'rektrs-leads-workflow',
+            taskQueue: 'main',
+          });
+      } catch (err) {}
+      try {
+        // REKTRS W3: the evergreen recycler driver (hourly tick; the
+        // weekly per-org window + 6-day guard live in the sweep — same
+        // duplicate-start contract).
+        await this._temporalService.client
+          ?.getRawClient()
+          ?.workflow?.start('rektrsEvergreenWorkflow', {
+            workflowId: 'rektrs-evergreen-workflow',
+            taskQueue: 'main',
+          });
+      } catch (err) {}
+      try {
+        // REKTRS W4: the milestone auto-CTA driver (hourly sweep; the
+        // once-only dedupe + attempt caps live in the sweep — same
+        // duplicate-start contract).
+        await this._temporalService.client
+          ?.getRawClient()
+          ?.workflow?.start('rektrsMilestoneCtaWorkflow', {
+            workflowId: 'rektrs-milestone-cta-workflow',
+            taskQueue: 'main',
+          });
+      } catch (err) {}
     }
   }
 }

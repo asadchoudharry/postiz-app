@@ -45,6 +45,22 @@ model Organization {
   webhooks            Webhooks[]
   oauthApp            OAuthApp[]
   oauthAuthorizations OAuthAuthorization[]
+  rektrsBrands        Brand[]
+  rektrsCampaigns     Campaign[]
+  rektrsApprovals     Approval[]
+  rektrsSettings      RektrsOrgSettings?
+  rektrsLeadRules     LeadRule[]
+  rektrsLeads         Lead[]
+  rektrsEvergreenSettings EvergreenSettings[]
+  rektrsEvergreenRuns     EvergreenRun[]
+  rektrsEvergreenCopies   EvergreenCopy[]
+  rektrsMilestoneCtaSettings MilestoneCtaSettings[]
+  rektrsMilestoneCtaRuns     MilestoneCtaRun[]
+  rektrsMilestoneCtaActions  MilestoneCtaAction[]
+  rektrsInboxSettings InboxSettings[]
+  rektrsInboxItems    InboxItem[]
+  rektrsBlogSettings  BlogSettings[]
+  rektrsBlogChainRuns BlogChainRun[]
 
   @@index([apiKey])
   @@index([streakSince])
@@ -92,6 +108,7 @@ model User {
   pictureId             String?
   providerId            String?
   timezone              Int
+  timezoneName          String?
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
   lastReadNotifications DateTime             @default(now())
@@ -144,6 +161,10 @@ model UserOrganization {
   organizationId String
   disabled       Boolean      @default(false)
   role           Role         @default(USER)
+  // REKTRS P3 functional layer (design §5): CREATOR | REVIEWER | PUBLISHER |
+  // MANAGER | ANALYST. Empty set = derive defaults from `role` at read time
+  // (SUPERADMIN/ADMIN → all five, USER → {CREATOR}); a non-empty set is authoritative.
+  functions      String[]     @default([])
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id])
@@ -369,6 +390,7 @@ model Integration {
   internalId            String
   organizationId        String
   name                  String
+  customName            String?
   picture               String?
   providerIdentifier    String
   type                  String
@@ -394,6 +416,7 @@ model Integration {
   orderItems            OrderItems[]
   plugs                 Plugs[]
   posts                 Post[]
+  rektrsBrand           BrandIntegration?
 
   @@unique([organizationId, internalId])
   @@index([rootInternalId])
@@ -462,6 +485,7 @@ model Post {
   content                    String
   delay                      Int                       @default(0)
   group                      String
+  batchId                    String?
   title                      String?
   description                String?
   parentPostId               String?
@@ -492,6 +516,7 @@ model Post {
   tags                       TagsPosts[]
 
   @@index([group])
+  @@index([batchId])
   @@index([deletedAt])
   @@index([publishDate])
   @@index([state])
@@ -1834,4 +1859,808 @@ model Announcement {
   description String
   color       AnnouncementColor @default(INFO)
   createdAt   DateTime          @default(now())
+}
+
+// ─── REKTRS P3 — brands, campaigns, approvals ────────────────────────────────
+// All tables are additive and REKTRS-owned (@@map to rektrs_*). Tenancy key on
+// every row: organizationId. Nothing here alters upstream models.
+// Design: P3-1-DESIGN.md §1.3 (REKTRS Social campaigns & approvals).
+
+enum RektrsApprovalState {
+  DRAFT
+  IN_REVIEW
+  APPROVED
+  CHANGES_REQUESTED
+  REJECTED
+  INVALIDATED
+  SCHEDULED
+  PUBLISHED
+  CANCELLED
+  EXPIRED
+}
+
+enum RektrsDecision {
+  APPROVE
+  REQUEST_CHANGES
+  REJECT
+}
+
+enum RektrsActorKind {
+  USER
+  API_KEY
+  MCP
+  CLIENT_TOKEN
+  SYSTEM
+}
+
+model Brand {
+  id             String       @id @default(uuid())
+  organizationId String
+  name           String
+  slug           String
+  description    String?
+  // Brand identity for P2-3 (profiles / multi-brand switcher) — designed here, consumed there.
+  logoMediaId    String?      // → Media.id (validated org-internal at service layer)
+  colorPrimary   String?
+  colorSecondary String?
+  // Policy: channels under a brand with approvalRequired=true cannot be scheduled
+  // or published without an APPROVED submission (design §4). Brand-level is the unit of
+  // enforcement because channels belong to brands, not to campaigns.
+  approvalRequired Boolean    @default(false)
+  // W5 crisis kill-switch (AUTOMATION-WORKFLOWS.md W5): while pausedAt is set, the
+  // brand's channels cannot schedule or publish (gates refuse with BRAND_PAUSED) and
+  // every QUEUE post has been pulled back to DRAFT; BrandPausedPost rows remember
+  // the pulled roots + their publish dates so a resume can restore them.
+  pausedAt       DateTime?
+  pausedById     String?
+  pauseReason    String?
+  createdById    String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  deletedAt      DateTime?
+  version        Int          @default(1)
+
+  organization Organization      @relation(fields: [organizationId], references: [id])
+  campaigns    Campaign[]
+  channels     BrandIntegration[]
+  approvals    Approval[]
+  pausedPosts  BrandPausedPost[]
+  leadRule     LeadRule?
+  leads        Lead[]
+  evergreenSettings EvergreenSettings?
+  evergreenRuns     EvergreenRun[]
+  evergreenCopies   EvergreenCopy[]
+  milestoneCtaSettings MilestoneCtaSettings?
+  milestoneCtaRuns     MilestoneCtaRun[]
+  milestoneCtaActions  MilestoneCtaAction[]
+  inboxSettings InboxSettings?
+  inboxItems    InboxItem[]
+  blogSettings  BlogSettings?
+  blogChainRuns BlogChainRun[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+  @@index([deletedAt])
+  @@map("rektrs_brands")
+}
+
+// A channel (Integration) belongs to at most one brand. Membership is what pulls
+// a channel's posts into approval policy.
+model BrandIntegration {
+  id            String @id @default(uuid())
+  brandId       String
+  integrationId String @unique          // ≤ 1 brand per channel
+  createdAt     DateTime @default(now())
+
+  brand       Brand       @relation(fields: [brandId], references: [id])
+  integration Integration @relation(fields: [integrationId], references: [id])
+
+  @@index([brandId])
+  @@map("rektrs_brand_integrations")
+}
+
+// W5 kill-switch snapshot: one row per QUEUE root post pulled back when a brand
+// was paused. `publishDate` is the date the post carried at pause time; resume
+// restores it and re-queues the root through Gate A. Rows are consumed (deleted)
+// by the resume that reads them — a brand that is not paused has no rows.
+model BrandPausedPost {
+  id          String   @id @default(uuid())
+  brandId     String
+  postId      String                        // → Post.id (root post of the pulled group)
+  group       String                        // Post.group of the pulled variant
+  batchId     String?                       // Post.batchId at pause time (null = batch-less)
+  publishDate DateTime                      // the date to restore on resume
+  createdAt   DateTime @default(now())
+
+  brand Brand @relation(fields: [brandId], references: [id])
+
+  @@unique([brandId, postId])
+  @@index([brandId])
+  @@map("rektrs_brand_paused_posts")
+}
+
+model Campaign {
+  id             String    @id @default(uuid())
+  organizationId String
+  brandId        String
+  name           String
+  objective      String?
+  status         String    @default("ACTIVE")   // ACTIVE | PAUSED | COMPLETED | ARCHIVED
+  startsAt       DateTime?
+  endsAt         DateTime?
+  ownerId        String                          // marketing manager accountable for the campaign
+  createdById    String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+  version        Int       @default(1)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  brand        Brand        @relation(fields: [brandId], references: [id])
+  brief        Brief?
+  approvals    Approval[]
+
+  @@index([organizationId])
+  @@index([brandId])
+  @@index([ownerId])
+  @@index([deletedAt])
+  @@map("rektrs_campaigns")
+}
+
+model Brief {
+  id                String   @id @default(uuid())
+  organizationId    String
+  campaignId        String   @unique
+  objective         String
+  audience          String?
+  keyMessages       String?                       // markdown
+  mandatoryIncludes String?                       // must appear (links, hashtags, disclosures)
+  prohibitedTerms   String?                       // feeds the advisory editorial check, never auto-blocks
+  tone              String?
+  references        String?                       // JSON: source links/citations (P4 research plugs in here)
+  assigneeId        String?                       // creator assigned to produce the content
+  dueAt             DateTime?
+  createdById       String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  version           Int      @default(1)
+
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+
+  @@index([organizationId])
+  @@index([assigneeId])
+  @@map("rektrs_briefs")
+}
+
+// Immutable snapshot of ONE channel variant of a submission, taken at submit time.
+// The thread group of one integration = one ContentVersion; `payload` is the
+// canonical structure the approval hash is computed over (design §2.3).
+model ContentVersion {
+  id            String   @id @default(uuid())
+  organizationId String
+  approvalId    String
+  integrationId String
+  group         String                          // Post.group of the channel variant
+  versionNo     Int                             // per (approvalId, integrationId), from 1
+  // Canonical payload: ordered thread parts [{content, delay, image:[{mediaId, path}]}]
+  // + provider settings + title/description — exactly as stored on the Post rows.
+  payload       Json
+  contentHash   String                          // SHA-256 over the canonical payload (design §2.3)
+  createdById   String
+  creationMethod CreationMethod @default(WEB)   // provenance of the save that was submitted
+  createdAt     DateTime @default(now())
+
+  approval Approval @relation(fields: [approvalId], references: [id])
+
+  @@unique([approvalId, integrationId, versionNo])
+  @@index([organizationId])
+  @@index([approvalId])
+  @@index([contentHash])
+  @@map("rektrs_content_versions")
+}
+
+// The submission aggregate. One row per submission of one batchId.
+// State machine in design §2. `approvedHash` is the batch hash (§2.3) frozen at approval.
+model Approval {
+  id             String             @id @default(uuid())
+  organizationId String
+  batchId        String                          // → Post.batchId (the submission unit, design §1.2)
+  brandId        String                          // snapshotted from the channels' brand at submit time,
+  campaignId     String?                         // so re-assigning a channel never rewrites history
+  state          RektrsApprovalState @default(DRAFT)
+  round          Int                @default(1)   // resubmission counter
+  submittedById  String?                         // maker (set at submit; maker-checker in design §2.2)
+  submittedAt    DateTime?
+  decidedById    String?
+  decidedAt      DateTime?
+  decision       RektrsDecision?
+  approvedHash   String?                         // batch hash of the approved version set
+  expiresAt      DateTime?                       // optional approval TTL (design §7, decision 3)
+  // W2 alert chain markers (AUTOMATION-WORKFLOWS.md W2): set by the reminder
+  // sweep when the 4h reminder / 12h escalation has been claimed for the
+  // current IN_REVIEW round; reset to null on every (re)submit. The claim is
+  // an updateMany on (state = IN_REVIEW, marker IS NULL), so a threshold can
+  // fire at most once per round even under concurrent sweeps.
+  reminderSentAt DateTime?
+  escalatedAt    DateTime?
+  createdById    String
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  version        Int                @default(1)  // optimistic concurrency (design §3.3)
+
+  organization Organization    @relation(fields: [organizationId], references: [id])
+  brand        Brand           @relation(fields: [brandId], references: [id])
+  campaign     Campaign?       @relation(fields: [campaignId], references: [id])
+  versions     ContentVersion[]
+  events       ApprovalEvent[]
+
+  @@index([organizationId])
+  @@index([batchId])
+  @@index([brandId])
+  @@index([state])
+  @@index([submittedById])
+  @@map("rektrs_approvals")
+}
+
+// Append-only history of an Approval — the review timeline's spine.
+model ApprovalEvent {
+  id         String            @id @default(uuid())
+  approvalId String
+  type       String                          // SUBMITTED | RESUBMITTED | APPROVED | CHANGES_REQUESTED |
+                                             // REJECTED | INVALIDATED | SCHEDULED | RESCHEDULED |
+                                             // PUBLISHED | PUBLISH_BLOCKED | CANCELLED | EXPIRED |
+                                             // COMMENTED | COMMENT_RESOLVED |
+                                             // REVIEW_REMINDER | REVIEW_ESCALATED (W2 sweep, actorKind SYSTEM)
+  actorId    String?
+  actorKind  RektrsActorKind   @default(USER)
+  commentId  String?                         // → Comments.id when the event is a review comment
+  metadata   Json?                           // e.g. {fromHash, toHash} on INVALIDATED, {postId} on PUBLISHED
+  createdAt  DateTime          @default(now())
+
+  approval Approval @relation(fields: [approvalId], references: [id])
+
+  @@index([approvalId])
+  @@index([createdAt])
+  @@map("rektrs_approval_events")
+}
+
+// Append-only audit for every REKTRS policy-relevant action (not just approvals:
+// brand/campaign writes, policy changes, client-token use, gate blocks).
+model AuditEntry {
+  id             String          @id @default(uuid())
+  organizationId String
+  actorId        String?
+  actorKind      RektrsActorKind @default(USER)
+  action         String                          // e.g. brand.create, approval.decide, gate.schedule_blocked
+  entityType     String                          // Brand | Campaign | Brief | Approval | Post | Policy
+  entityId       String
+  beforeHash     String?
+  afterHash      String?
+  ip             String?
+  metadata       Json?
+  createdAt      DateTime        @default(now())
+
+  @@index([organizationId])
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([createdAt])
+  @@map("rektrs_audit_entries")
+}
+
+// Per-org policy knobs, REKTRS-side so Organization (upstream) stays untouched.
+model RektrsOrgSettings {
+  organizationId          String  @id
+  approvalRequiredDefault Boolean @default(false)  // org-wide floor; Brand.approvalRequired can only raise it
+  allowSelfApproval       Boolean @default(false)  // maker-checker exception switch (design §2.2)
+  approvalTtlHours        Int?                     // null = approvals do not expire (design §7, decision 3)
+  clientApprovalEnabled   Boolean @default(false)  // scoped client decision tokens (design §3.2)
+  // W2 alert chain knobs (AUTOMATION-WORKFLOWS.md W2), edited in the org
+  // approval-policy UI: an IN_REVIEW submission untouched for
+  // alertReminderHours re-alerts its reviewers once; at alertEscalationHours
+  // the MANAGER holders are alerted once. Channel toggles gate the W2
+  // fan-out only (W5 kill-switch notices always send).
+  alertReminderHours      Int     @default(4)
+  alertEscalationHours    Int     @default(12)
+  alertInAppEnabled       Boolean @default(true)
+  alertEmailEnabled       Boolean @default(true)
+  // W1 comment-to-DM lead machine (AUTOMATION-WORKFLOWS.md W1): the org's CRM
+  // webhook (Operqon-first, but the endpoint is a setting, never hardcoded).
+  // crmWebhookSecret is write-only through the API — reads expose only
+  // "secret is set". Delivery is HMAC-signed and SSRF-guarded (the codebase's
+  // webhook URL validator + pinned-DNS dispatcher).
+  crmWebhookUrl           String?
+  crmWebhookSecret        String?
+  crmWebhookEnabled       Boolean @default(false)
+  // W3 evergreen recycler schedule (AUTOMATION-WORKFLOWS.md W3): the
+  // weekly scan fires for the org's enabled brands when the UTC weekday
+  // (0 = Sunday … 6 = Saturday) and hour match. Upstream Organization has
+  // no timezone field, so the schedule is defined — and labelled in the
+  // UI — in UTC. Defaults: Monday 06:00 UTC.
+  evergreenWeekday        Int     @default(1)
+  evergreenHour           Int     @default(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@map("rektrs_org_settings")
+}
+
+// Idempotency keys for mutating /api/rektrs/v1 calls (design §3.3).
+model RektrsIdempotencyKey {
+  id             String   @id @default(uuid())
+  organizationId String
+  key            String
+  requestHash    String                          // same key + different body → 422
+  responseStatus Int
+  responseBody   Json
+  createdAt      DateTime @default(now())
+
+  @@unique([organizationId, key])
+  @@index([createdAt])
+  @@map("rektrs_idempotency_keys")
+}
+
+// ─── REKTRS W1 — Comment-to-DM Lead Machine (AUTOMATION-WORKFLOWS.md W1) ─────
+// A comment on a brand channel's post containing a configured keyword gets a
+// DM (the brand's template) and becomes a Lead pushed to the org's CRM
+// webhook (RektrsOrgSettings.crmWebhook*). Complaint/guard words short-
+// circuit automation into HUMAN_REVIEW. All tables additive, rektrs_* mapped.
+
+enum RektrsLeadStatus {
+  HUMAN_REVIEW     // guard word hit — no DM, no CRM push; a human owns it
+  DM_PENDING       // keyword lead created; DM attempt not yet resolved
+  DM_SENT          // DM delivered; CRM webhook not yet delivered
+  DM_FAILED        // DM failed at the provider; webhook NOT attempted
+  WEBHOOK_PENDING  // DM sent; CRM delivery failed, retries remain
+  WEBHOOK_FAILED   // DM sent; CRM delivery retries exhausted
+  COMPLETE         // DM sent + CRM delivered (or CRM webhook not configured)
+  HANDLED          // a human marked a HUMAN_REVIEW lead handled
+}
+
+// One automation rule per brand. `guardWords` are the brand's overrides /
+// additions; the org-wide default guard list (service-side constant in
+// rektrs.leads.ts) applies while useDefaultGuardWords is true.
+model LeadRule {
+  id                   String   @id @default(uuid())
+  organizationId       String
+  brandId              String   @unique          // one rule per brand
+  enabled              Boolean  @default(false)
+  keywords             String[] @default([])     // trigger phrases, matched case-insensitively on word boundaries
+  dmTemplate           String   @default("")     // supports {{name}} {{keyword}} {{link}} placeholders
+  guardWords           String[] @default([])
+  useDefaultGuardWords Boolean  @default(true)
+  createdById          String
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  version              Int      @default(1)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  brand        Brand        @relation(fields: [brandId], references: [id])
+  leads        Lead[]
+
+  @@index([organizationId])
+  @@map("rektrs_lead_rules")
+}
+
+model Lead {
+  id                 String           @id @default(uuid())
+  organizationId     String
+  brandId            String
+  ruleId             String
+  integrationId      String                        // the brand channel the comment arrived on
+  providerIdentifier String                        // facebook | instagram (| instagram-standalone, reserved)
+  postId             String?                       // → Post.id when the provider post maps to a local post
+  providerPostId     String                        // provider media/post id (Post.releaseId)
+  commentId          String                        // provider comment id
+  commenterId        String                        // provider user id of the commenter
+  commenterName      String?                       // handle/username as the provider exposes it
+  commentText        String
+  commentAt          DateTime?                     // provider timestamp of the comment
+  matchedKeyword     String?                       // the keyword that fired (null on guard-routed leads)
+  matchedGuardWord   String?                       // the guard word that routed to HUMAN_REVIEW
+  status             RektrsLeadStatus @default(DM_PENDING)
+  dmMessageId        String?
+  dmError            String?
+  dmSentAt           DateTime?
+  webhookAttempts    Int              @default(0)
+  webhookError       String?
+  webhookDeliveredAt DateTime?
+  enrichment         Json?                         // seam: phone/email/etc. a future DM-reply ingestion adds (W6)
+  handledById        String?
+  handledAt          DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  version            Int              @default(1)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  brand        Brand        @relation(fields: [brandId], references: [id])
+  rule         LeadRule     @relation(fields: [ruleId], references: [id])
+
+  // A provider comment is one lead at most (the poller and the webhook
+  // receiver race safely on this), and the per-commenter-per-post DM dedupe
+  // is a partial unique index in the schema step (Prisma cannot express it:
+  // HUMAN_REVIEW rows hold their slot by service rule, not by the index).
+  @@unique([integrationId, commentId])
+  @@index([organizationId])
+  @@index([brandId])
+  @@index([status])
+  @@index([integrationId, providerPostId, commenterId])
+  @@map("rektrs_leads")
+}
+
+// Ingestion dedupe: every provider comment the W1 pipeline has SEEN (matched
+// or not), so the hourly poller and webhook deliveries never reprocess one.
+model LeadCommentSeen {
+  id            String   @id @default(uuid())
+  integrationId String
+  commentId     String
+  createdAt     DateTime @default(now())
+
+  @@unique([integrationId, commentId])
+  @@index([createdAt])
+  @@map("rektrs_lead_comment_seen")
+}
+
+// ─── REKTRS W3 — Evergreen Recycler (AUTOMATION-WORKFLOWS.md W3) ────────────
+// Weekly per-brand scan: the brand's top-performing PUBLISHED posts older
+// than a configured age are re-issued as refreshed DRAFT copies for a
+// human to edit/schedule. Engagement is measured at scan time through the
+// providers' postAnalytics surface (no metrics layer exists until P6) and
+// snapshotted onto the copy row — never invented. Copies are ordinary
+// DRAFT posts: the recycler never schedules and never publishes, so the
+// P3 approval gates apply when a human schedules a copy. All tables
+// additive, rektrs_* mapped.
+
+// One recycler configuration per brand (the LeadRule pattern). styleMode:
+// VERBATIM (exact copy) | HOOK (prepend a rotating hook line) | ROTATE
+// (alternate verbatim / hook across the brand's copies, continuing across
+// cycles). hookLines are display text, prepended verbatim.
+model EvergreenSettings {
+  id             String   @id @default(uuid())
+  organizationId String
+  brandId        String   @unique          // one configuration per brand
+  enabled        Boolean  @default(false)
+  minAgeDays     Int      @default(45)
+  topN           Int      @default(3)
+  styleMode      String   @default("ROTATE")  // VERBATIM | HOOK | ROTATE
+  hookLines      String[] @default([])
+  createdById    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  version        Int      @default(1)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  brand        Brand        @relation(fields: [brandId], references: [id])
+
+  @@index([organizationId])
+  @@map("rektrs_evergreen_settings")
+}
+
+// One row per scan of one brand (scheduled or manual). skippedReasons is
+// the run's honest account of what was NOT copied and why:
+// { counts: { [reason]: n }, entries: [{ postId, reason }] (≤ 50) } with
+// reasons NO_CHANNELS | CHANNEL_UNSUPPORTED | POST_MISSING |
+// METRICS_FETCH_FAILED | NO_METRICS | PENDING_COPY_EXISTS |
+// ALREADY_RECYCLED_COPY | ALREADY_COPIED_THIS_RUN.
+model EvergreenRun {
+  id             String    @id @default(uuid())
+  organizationId String
+  brandId        String
+  trigger        String                        // SCHEDULED | MANUAL
+  startedAt      DateTime  @default(now())
+  finishedAt     DateTime?
+  scannedCount   Int       @default(0)
+  copiedCount    Int       @default(0)
+  skippedReasons Json?
+  createdAt      DateTime  @default(now())
+
+  organization Organization  @relation(fields: [organizationId], references: [id])
+  brand        Brand         @relation(fields: [brandId], references: [id])
+  copies       EvergreenCopy[]
+
+  @@index([organizationId])
+  @@index([brandId])
+  @@index([startedAt])
+  @@map("rektrs_evergreen_runs")
+}
+
+// Lineage: one row per created copy. metrics is the engagement snapshot
+// as fetched at scan time: { likes, comments, shares, score, series:
+// [{label, total}], fetchedAt } — nulls where the provider exposes no
+// such counter. style is the style ACTUALLY applied (a HOOK turn without
+// a hook line degrades to VERBATIM and is recorded as such); hookLine is
+// the exact line prepended when style = HOOK.
+model EvergreenCopy {
+  id           String   @id @default(uuid())
+  organizationId String
+  brandId      String
+  runId        String
+  sourcePostId String                        // → Post.id (the published root that was copied)
+  copyPostId   String                        // → Post.id (the new DRAFT root)
+  style        String                        // VERBATIM | HOOK (as applied)
+  hookLine     String?
+  metrics      Json
+  createdAt    DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  brand        Brand        @relation(fields: [brandId], references: [id])
+  run          EvergreenRun @relation(fields: [runId], references: [id])
+
+  // One copy of a source per run (a run is one cycle of the recycler).
+  @@unique([brandId, sourcePostId, runId])
+  @@index([organizationId])
+  @@index([brandId])
+  @@index([sourcePostId])
+  @@index([copyPostId])
+  @@map("rektrs_evergreen_copies")
+}
+
+// ── REKTRS W4 — Milestone Auto-CTA (AUTOMATION-WORKFLOWS.md W4) ─────────────
+// When a brand's PUBLISHED post crosses the brand's like threshold
+// (default 20), the brand's configured CTA is posted as a first comment
+// on that post — once per post, fully audited. Engagement is measured
+// live at scan time (the W3 gateway; no stored metrics layer until P6)
+// and the CTA link is posted verbatim — the first-comment shortener is
+// a P5 item (see the marked hook in rektrs.milestone-cta.ts). All
+// tables additive, rektrs_* mapped.
+
+// One milestone-CTA configuration per brand (the EvergreenSettings
+// pattern). Enabling requires ctaText and/or ctaUrl (CTA_CONTENT_REQUIRED)
+// and an http(s) ctaUrl (CTA_URL_INVALID) — enforced at the service layer.
+model MilestoneCtaSettings {
+  id             String   @id @default(uuid())
+  organizationId String
+  brandId        String   @unique          // one configuration per brand
+  enabled        Boolean  @default(false)
+  likeThreshold  Int      @default(20)
+  ctaText        String   @default("")
+  ctaUrl         String   @default("")
+  createdById    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  version        Int      @default(1)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  brand        Brand        @relation(fields: [brandId], references: [id])
+
+  @@index([organizationId])
+  @@map("rektrs_milestone_cta_settings")
+}
+
+// One row per scan of one brand (scheduled or manual). skippedReasons is
+// the run's honest account of what was NOT acted on and why:
+// { counts: { [reason]: n }, entries: [{ postId, reason }] (≤ 50) } with
+// reasons NO_CHANNELS | CHANNEL_UNSUPPORTED | POST_MISSING |
+// METRICS_FETCH_FAILED | NO_METRICS | BELOW_THRESHOLD |
+// PROVIDER_COMMENT_UNSUPPORTED | ALREADY_POSTED | RETRY_EXHAUSTED.
+model MilestoneCtaRun {
+  id             String    @id @default(uuid())
+  organizationId String
+  brandId        String
+  trigger        String                        // SCHEDULED | MANUAL
+  startedAt      DateTime  @default(now())
+  finishedAt     DateTime?
+  scannedCount   Int       @default(0)
+  postedCount    Int       @default(0)
+  skippedReasons Json?
+  createdAt      DateTime  @default(now())
+
+  organization Organization        @relation(fields: [organizationId], references: [id])
+  brand        Brand               @relation(fields: [brandId], references: [id])
+  actions      MilestoneCtaAction[]
+
+  @@index([organizationId])
+  @@index([brandId])
+  @@index([startedAt])
+  @@map("rektrs_milestone_cta_runs")
+}
+
+// The dedupe + audit record: AT MOST one row per (brand, post), ever —
+// the unique index is the once-only guarantee. A CTA_POSTED row is
+// terminal (the CTA is never posted twice on a post). A failed attempt
+// is recorded CTA_FAILED with the provider error and retried on later
+// cycles; when attempts reach the cap (3) the row turns CTA_EXHAUSTED
+// and the engine stops trying. commentText is the EXACT text attempted
+// (and, on success, posted); likesAtCheck is the measured like count of
+// the latest evaluation — never an invented number.
+model MilestoneCtaAction {
+  id                 String    @id @default(uuid())
+  organizationId     String
+  brandId            String
+  runId              String                        // the run that FIRST recorded this post
+  postId             String                        // → Post.id (the published root)
+  integrationId      String                        // the post's channel at scan time
+  providerIdentifier String
+  status             String                        // CTA_POSTED | CTA_FAILED | CTA_EXHAUSTED
+  attempts           Int       @default(0)
+  likesAtCheck       Int?
+  commentText        String
+  commentId          String?                       // provider comment id (success only)
+  error              String?                       // last provider error (failures)
+  postedAt           DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  organization Organization    @relation(fields: [organizationId], references: [id])
+  brand        Brand           @relation(fields: [brandId], references: [id])
+  run          MilestoneCtaRun @relation(fields: [runId], references: [id])
+
+  // Once per post per brand, ever — the dedupe guarantee.
+  @@unique([brandId, postId])
+  @@index([organizationId])
+  @@index([brandId])
+  @@index([postId])
+  @@index([status])
+  @@map("rektrs_milestone_cta_actions")
+}
+
+// ─── REKTRS W6 — Inbox Triage (Multilingual) (AUTOMATION-WORKFLOWS.md W6) ───
+// Inbound comments on a triage-enabled brand's channels (the W1 ingestion
+// stream: hourly poll + Meta webhook) are classified deterministically —
+// COMPLAINT (→ human queue + MANAGER alert) / FAQ topic (→ suggested-reply
+// draft from the brand's template) / GENERAL — translated into the brand's
+// working language when a translation provider is configured, and listed
+// in the inbox. NOTHING is auto-sent in v1: a human sends a draft with one
+// tap (POST …/inbox/:itemId/send). All tables additive, rektrs_* mapped.
+
+// One triage configuration per brand (the MilestoneCtaSettings pattern).
+// faq* are reply templates with {brandName} / {name} placeholders; a topic
+// with an empty template still classifies — the item simply lands without
+// a draft. extraComplaintKeywords are ADDED to the built-in complaint
+// lexicon (W1 guard words + anger terms); the defaults always apply.
+model InboxSettings {
+  id                     String   @id @default(uuid())
+  organizationId         String
+  brandId                String   @unique          // one configuration per brand
+  enabled                Boolean  @default(false)
+  workingLanguage        String   @default("en")   // en | ur | ar | ur-Latn
+  faqPrice               String   @default("")
+  faqTiming              String   @default("")
+  faqLocation            String   @default("")
+  faqDelivery            String   @default("")
+  extraComplaintKeywords String[] @default([])
+  createdById            String
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  version                Int      @default(1)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  brand        Brand        @relation(fields: [brandId], references: [id])
+
+  @@index([organizationId])
+  @@map("rektrs_inbox_settings")
+}
+
+// One row per triaged inbound comment. category: COMPLAINT | FAQ_PRICE |
+// FAQ_TIMING | FAQ_LOCATION | FAQ_DELIVERY | GENERAL. status: NEW
+// (listed) | QUEUED (complaint — a human owns it) | DRAFTED (FAQ with a
+// suggested reply) | SENT (a human sent the reply) | DISMISSED.
+// translationStatus: NOT_NEEDED (already the working language) |
+// TRANSLATED | UNAVAILABLE (no provider configured) | FAILED — and
+// translatedText is null unless TRANSLATED: a translation is never
+// invented. note carries the channel's reply-capability note (and a
+// translation-failure note) so the inbox screen can be honest about what
+// Send will do before a human presses it.
+model InboxItem {
+  id                 String    @id @default(uuid())
+  organizationId     String
+  brandId            String
+  integrationId      String                        // the brand channel the comment arrived on
+  providerIdentifier String                        // facebook | instagram (| instagram-standalone, reserved)
+  postId             String?                       // → Post.id when the provider post maps to a local post
+  providerPostId     String                        // provider media/post id (Post.releaseId)
+  providerCommentId  String                        // provider comment id
+  authorId           String                        // provider user id of the commenter
+  authorName         String?                       // handle/username as the provider exposes it
+  originalText       String
+  detectedLanguage   String                        // en | ur | ar | ur-Latn | other
+  translatedText     String?
+  translationStatus  String                        // NOT_NEEDED | TRANSLATED | UNAVAILABLE | FAILED
+  category           String                        // COMPLAINT | FAQ_PRICE | FAQ_TIMING | FAQ_LOCATION | FAQ_DELIVERY | GENERAL
+  matchedPhrase      String?                       // the lexicon phrase that fired (null on GENERAL)
+  status             String                        // NEW | QUEUED | DRAFTED | SENT | DISMISSED
+  suggestedReply     String?                       // the drafted FAQ reply (DRAFTED items)
+  sentText           String?                       // the exact text posted on send (a human may edit the draft)
+  replyCommentId     String?                       // provider id of the posted reply (success only)
+  sendError          String?                       // last send failure (provider error, verbatim-ish ≤500)
+  sentAt             DateTime?
+  sentById           String?
+  dismissedById      String?
+  dismissedAt        DateTime?
+  note               String?                       // reply-capability / translation notes for the human
+  commentAt          DateTime?                     // provider timestamp of the comment
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  version            Int       @default(1)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  brand        Brand        @relation(fields: [brandId], references: [id])
+
+  // One triage row per provider comment per brand — the poller and the
+  // webhook receiver race safely on this (and on the W1 seen-claim that
+  // precedes triage in the shared ingestion flow).
+  @@unique([brandId, providerCommentId])
+  @@index([organizationId])
+  @@index([brandId])
+  @@index([status])
+  @@index([category])
+  @@map("rektrs_inbox_items")
+}
+
+// ─── REKTRS W7 — Blog → Social Chain (AUTOMATION-WORKFLOWS.md W7) ───────────
+// One configuration per brand. webhookSecret is the per-brand WordPress
+// webhook signing secret: stored server-side only (the W1 crmWebhookSecret
+// convention — the database is the trust boundary), write-only through the
+// API: reads expose only `secretSet`, and the value leaves the server
+// exactly once, in the rotate response. The voice block (voiceTone /
+// voiceNotes / examplePost) is W7's MINIMAL brand-voice profile — P4's
+// brand memory will supersede it; it is labelled as such in the UI.
+model BlogSettings {
+  id                  String   @id @default(uuid())
+  organizationId      String
+  brandId             String   @unique          // one configuration per brand
+  enabled             Boolean  @default(false)
+  webhookSecret       String?
+  aiEnabled           Boolean  @default(true)
+  voiceTone           String   @default("")
+  voiceNotes          String   @default("")
+  examplePost         String   @default("")
+  utmSource           String   @default("")      // empty → the brand slug at run time
+  utmMedium           String   @default("social")
+  firstCommentTemplate String  @default("Read the full post: {link}")  // {link} = UTM link, {title} = post title
+  createdById         String
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  version             Int      @default(1)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  brand        Brand        @relation(fields: [brandId], references: [id])
+
+  @@index([organizationId])
+  @@map("rektrs_blog_settings")
+}
+
+// One row per accepted WordPress delivery. status: RECEIVED (transient —
+// the receiver processes synchronously, so a resting RECEIVED row means
+// the process died mid-chain) | DRAFTED (every variant with a channel got
+// its drafts) | PARTIAL (some variant SKIPPED_NO_CHANNEL / failed) |
+// FAILED (nothing could be drafted; error says why) |
+// SKIPPED_BRAND_PAUSED (W5 kill-switch: recorded, nothing created, the
+// receiver still answered 200 so WordPress does not retry-storm).
+// aiMode: AI (drafts came from the configured AI provider) | AI_FALLBACK
+// (deterministic template drafts — AI disabled, unconfigured or failed;
+// aiError carries the provider failure when there was one, ≤500 chars).
+// variants is the per-platform outcome record:
+//   { linkedin: {outcome, postIds, integrationIds}, x: {...}, instagram: {...} }
+// with outcome DRAFTED | SKIPPED_NO_CHANNEL | FAILED. firstComment is the
+// intended first comment (template rendered with the UTM link) — Post has
+// NO first-comment field anywhere in this codebase, so it lives on the
+// run only and a human pastes it after publishing (see W7 notes).
+model BlogChainRun {
+  id            String    @id @default(uuid())
+  organizationId String
+  brandId       String
+  wpPostId      String                        // WordPress post id, as delivered (string form)
+  wpLink        String
+  title         String
+  status        String    @default("RECEIVED")  // RECEIVED | DRAFTED | PARTIAL | FAILED | SKIPPED_BRAND_PAUSED
+  aiMode        String?                       // AI | AI_FALLBACK (null until drafting ran)
+  aiError       String?
+  firstComment  String?
+  variants      Json?
+  draftedCount  Int       @default(0)
+  error         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  version       Int       @default(1)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  brand        Brand        @relation(fields: [brandId], references: [id])
+
+  // One chain run per WordPress post per brand — re-deliveries dedupe on
+  // this (the receiver answers 200 {duplicate:true} and creates nothing).
+  @@unique([brandId, wpPostId])
+  @@index([organizationId])
+  @@index([brandId])
+  @@index([status])
+  @@map("rektrs_blog_chain_runs")
 }

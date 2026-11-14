@@ -15,9 +15,10 @@ import { Integration } from '@prisma/client';
 import FormDataUpload from 'form-data';
 import { lookup } from 'mime-types';
 import { hasExtension } from '@gitroom/helpers/utils/has.extension';
+import { DashboardFunction } from '@gitroom/nestjs-libraries/integrations/dashboard.function.decorator';
 
 const TUMBLR_API_URL = 'https://api.tumblr.com/v2';
-const TUMBLR_USER_AGENT = 'Postiz/1.0 (+https://postiz.com)';
+const TUMBLR_USER_AGENT = 'REKTRS-Social/1.0 (+https://rektrs.com)';
 const TUMBLR_TEXT_BLOCK_LIMIT = 4096;
 const TUMBLR_DEFAULT_VIDEO_WIDTH = 540;
 const TUMBLR_DEFAULT_VIDEO_HEIGHT = 405;
@@ -309,6 +310,7 @@ export class TumblrProvider extends SocialAbstract implements SocialProvider {
     };
   }
 
+  @DashboardFunction()
   async pages(accessToken: string) {
     const userInfo = await this.getUserInfo(accessToken);
     const blogs = userInfo.response?.user?.blogs || [];

@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { DatabaseModule } from '@gitroom/nestjs-libraries/database/prisma/database.module';
 import { ApiModule } from '@gitroom/backend/api/api.module';
+import { RektrsModule } from '@gitroom/backend/rektrs/rektrs.module';
 import { APP_GUARD } from '@nestjs/core';
 import { PoliciesGuard } from '@gitroom/backend/services/auth/permissions/permissions.guard';
 import { PublicApiModule } from '@gitroom/backend/public-api/public.api.module';
@@ -24,6 +25,7 @@ import { ioRedis } from '@gitroom/nestjs-libraries/redis/redis.service';
     SentryModule.forRoot(),
     DatabaseModule,
     ApiModule,
+    RektrsModule,
     PublicApiModule,
     AgentModule,
     ThirdPartyModule,
@@ -57,6 +59,8 @@ import { ioRedis } from '@gitroom/nestjs-libraries/redis/redis.service';
   exports: [
     DatabaseModule,
     ApiModule,
+    RektrsModule,
+    RektrsModule,
     PublicApiModule,
     AgentModule,
     ThrottlerModule,
