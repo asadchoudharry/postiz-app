@@ -71,3 +71,4 @@ jobs:
           else
             echo "::warning::DOKPLOY_DEPLOY_WEBHOOK secret is not set"
           fi
+# trigger: W3 build (b79fc9f7)
