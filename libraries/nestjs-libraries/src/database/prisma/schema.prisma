@@ -51,6 +51,9 @@ model Organization {
   rektrsSettings      RektrsOrgSettings?
   rektrsLeadRules     LeadRule[]
   rektrsLeads         Lead[]
+  rektrsEvergreenSettings EvergreenSettings[]
+  rektrsEvergreenRuns     EvergreenRun[]
+  rektrsEvergreenCopies   EvergreenCopy[]
 
   @@index([apiKey])
   @@index([streakSince])
@@ -1917,6 +1920,9 @@ model Brand {
   pausedPosts  BrandPausedPost[]
   leadRule     LeadRule?
   leads        Lead[]
+  evergreenSettings EvergreenSettings?
+  evergreenRuns     EvergreenRun[]
+  evergreenCopies   EvergreenCopy[]
 
   @@unique([organizationId, slug])
   @@index([organizationId])
@@ -2151,6 +2157,13 @@ model RektrsOrgSettings {
   crmWebhookUrl           String?
   crmWebhookSecret        String?
   crmWebhookEnabled       Boolean @default(false)
+  // W3 evergreen recycler schedule (AUTOMATION-WORKFLOWS.md W3): the
+  // weekly scan fires for the org's enabled brands when the UTC weekday
+  // (0 = Sunday … 6 = Saturday) and hour match. Upstream Organization has
+  // no timezone field, so the schedule is defined — and labelled in the
+  // UI — in UTC. Defaults: Monday 06:00 UTC.
+  evergreenWeekday        Int     @default(1)
+  evergreenHour           Int     @default(6)
 
   organization Organization @relation(fields: [organizationId], references: [id])
 
@@ -2271,4 +2284,98 @@ model LeadCommentSeen {
   @@unique([integrationId, commentId])
   @@index([createdAt])
   @@map("rektrs_lead_comment_seen")
+}
+
+// ─── REKTRS W3 — Evergreen Recycler (AUTOMATION-WORKFLOWS.md W3) ────────────
+// Weekly per-brand scan: the brand's top-performing PUBLISHED posts older
+// than a configured age are re-issued as refreshed DRAFT copies for a
+// human to edit/schedule. Engagement is measured at scan time through the
+// providers' postAnalytics surface (no metrics layer exists until P6) and
+// snapshotted onto the copy row — never invented. Copies are ordinary
+// DRAFT posts: the recycler never schedules and never publishes, so the
+// P3 approval gates apply when a human schedules a copy. All tables
+// additive, rektrs_* mapped.
+
+// One recycler configuration per brand (the LeadRule pattern). styleMode:
+// VERBATIM (exact copy) | HOOK (prepend a rotating hook line) | ROTATE
+// (alternate verbatim / hook across the brand's copies, continuing across
+// cycles). hookLines are display text, prepended verbatim.
+model EvergreenSettings {
+  id             String   @id @default(uuid())
+  organizationId String
+  brandId        String   @unique          // one configuration per brand
+  enabled        Boolean  @default(false)
+  minAgeDays     Int      @default(45)
+  topN           Int      @default(3)
+  styleMode      String   @default("ROTATE")  // VERBATIM | HOOK | ROTATE
+  hookLines      String[] @default([])
+  createdById    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  version        Int      @default(1)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  brand        Brand        @relation(fields: [brandId], references: [id])
+
+  @@index([organizationId])
+  @@map("rektrs_evergreen_settings")
+}
+
+// One row per scan of one brand (scheduled or manual). skippedReasons is
+// the run's honest account of what was NOT copied and why:
+// { counts: { [reason]: n }, entries: [{ postId, reason }] (≤ 50) } with
+// reasons NO_CHANNELS | CHANNEL_UNSUPPORTED | POST_MISSING |
+// METRICS_FETCH_FAILED | NO_METRICS | PENDING_COPY_EXISTS |
+// ALREADY_RECYCLED_COPY | ALREADY_COPIED_THIS_RUN.
+model EvergreenRun {
+  id             String    @id @default(uuid())
+  organizationId String
+  brandId        String
+  trigger        String                        // SCHEDULED | MANUAL
+  startedAt      DateTime  @default(now())
+  finishedAt     DateTime?
+  scannedCount   Int       @default(0)
+  copiedCount    Int       @default(0)
+  skippedReasons Json?
+  createdAt      DateTime  @default(now())
+
+  organization Organization  @relation(fields: [organizationId], references: [id])
+  brand        Brand         @relation(fields: [brandId], references: [id])
+  copies       EvergreenCopy[]
+
+  @@index([organizationId])
+  @@index([brandId])
+  @@index([startedAt])
+  @@map("rektrs_evergreen_runs")
+}
+
+// Lineage: one row per created copy. metrics is the engagement snapshot
+// as fetched at scan time: { likes, comments, shares, score, series:
+// [{label, total}], fetchedAt } — nulls where the provider exposes no
+// such counter. style is the style ACTUALLY applied (a HOOK turn without
+// a hook line degrades to VERBATIM and is recorded as such); hookLine is
+// the exact line prepended when style = HOOK.
+model EvergreenCopy {
+  id           String   @id @default(uuid())
+  organizationId String
+  brandId      String
+  runId        String
+  sourcePostId String                        // → Post.id (the published root that was copied)
+  copyPostId   String                        // → Post.id (the new DRAFT root)
+  style        String                        // VERBATIM | HOOK (as applied)
+  hookLine     String?
+  metrics      Json
+  createdAt    DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  brand        Brand        @relation(fields: [brandId], references: [id])
+  run          EvergreenRun @relation(fields: [runId], references: [id])
+
+  // One copy of a source per run (a run is one cycle of the recycler).
+  @@unique([brandId, sourcePostId, runId])
+  @@index([organizationId])
+  @@index([brandId])
+  @@index([sourcePostId])
+  @@index([copyPostId])
+  @@map("rektrs_evergreen_copies")
 }

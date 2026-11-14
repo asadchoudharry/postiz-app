@@ -36,6 +36,17 @@ export class InfiniteWorkflowRegister implements OnModuleInit {
             taskQueue: 'main',
           });
       } catch (err) {}
+      try {
+        // REKTRS W3: the evergreen recycler driver (hourly tick; the
+        // weekly per-org window + 6-day guard live in the sweep — same
+        // duplicate-start contract).
+        await this._temporalService.client
+          ?.getRawClient()
+          ?.workflow?.start('rektrsEvergreenWorkflow', {
+            workflowId: 'rektrs-evergreen-workflow',
+            taskQueue: 'main',
+          });
+      } catch (err) {}
     }
   }
 }

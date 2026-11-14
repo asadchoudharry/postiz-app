@@ -17,11 +17,13 @@ import { GetUserFromRequest } from '@gitroom/nestjs-libraries/user/user.from.req
 import { RektrsCatalogService } from '@gitroom/nestjs-libraries/rektrs/rektrs.catalog.service';
 import { RektrsBrandControlService } from '@gitroom/nestjs-libraries/rektrs/rektrs.brand-control.service';
 import { RektrsLeadsService } from '@gitroom/nestjs-libraries/rektrs/rektrs.leads.service';
+import { RektrsEvergreenService } from '@gitroom/nestjs-libraries/rektrs/rektrs.evergreen.service';
 import {
   AssignChannelDto,
   CreateBrandDto,
   PauseBrandDto,
   UpdateBrandDto,
+  UpdateEvergreenSettingsDto,
   UpdateLeadRuleDto,
 } from '@gitroom/nestjs-libraries/dtos/rektrs/rektrs.dto';
 import {
@@ -42,7 +44,8 @@ export class RektrsBrandsController {
   constructor(
     private _catalog: RektrsCatalogService,
     private _brandControl: RektrsBrandControlService,
-    private _leads: RektrsLeadsService
+    private _leads: RektrsLeadsService,
+    private _evergreen: RektrsEvergreenService
   ) {}
 
   @Post('/')
@@ -160,6 +163,54 @@ export class RektrsBrandsController {
       body,
       parseIfMatch(ifMatch)
     );
+  }
+
+  // ── W3 evergreen recycler: per-brand configuration, lineage, runs ────────
+  @Get('/:id/evergreen')
+  async getEvergreenSettings(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string
+  ) {
+    return this._evergreen.getEvergreenSettings(org.id, id);
+  }
+
+  @Put('/:id/evergreen')
+  @RequireRektrsFunctions('MANAGER')
+  async updateEvergreenSettings(
+    @GetOrgFromRequest() org: Organization,
+    @GetUserFromRequest() user: User,
+    @Param('id') id: string,
+    @Body() body: UpdateEvergreenSettingsDto,
+    @Headers('if-match') ifMatch: string,
+    @RealIP() ip: string
+  ) {
+    return this._evergreen.updateEvergreenSettings(
+      org.id,
+      sessionActor(user, ip),
+      id,
+      body,
+      parseIfMatch(ifMatch)
+    );
+  }
+
+  @Get('/:id/evergreen/copies')
+  @RequireRektrsFunctions('MANAGER', 'CREATOR', 'ANALYST')
+  async listEvergreenActivity(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string
+  ) {
+    return this._evergreen.listEvergreenActivity(org.id, id);
+  }
+
+  @Post('/:id/evergreen/run')
+  @RequireRektrsFunctions('MANAGER')
+  async runEvergreen(
+    @GetOrgFromRequest() org: Organization,
+    @GetUserFromRequest() user: User,
+    @Param('id') id: string,
+    @RealIP() ip: string
+  ) {
+    return this._evergreen.runBrandNow(org.id, sessionActor(user, ip), id);
   }
 
   @Delete('/:id/channels/:integrationId')

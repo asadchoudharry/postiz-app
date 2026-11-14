@@ -26,6 +26,10 @@ export interface RektrsOrgSettingsView {
   crmWebhookUrl: string | null;
   crmWebhookEnabled: boolean;
   crmWebhookSecretSet: boolean;
+  // W3 evergreen recycler schedule (AUTOMATION-WORKFLOWS.md W3): UTC
+  // weekday (0 = Sunday … 6 = Saturday) + hour of the weekly scan.
+  evergreenWeekday: number;
+  evergreenHour: number;
 }
 
 export const REKTRS_SETTINGS_DEFAULTS: RektrsOrgSettingsView = {
@@ -40,6 +44,8 @@ export const REKTRS_SETTINGS_DEFAULTS: RektrsOrgSettingsView = {
   crmWebhookUrl: null,
   crmWebhookEnabled: false,
   crmWebhookSecretSet: false,
+  evergreenWeekday: 1,
+  evergreenHour: 6,
 };
 
 /** Settings patch as accepted from the API: the view fields plus the
@@ -159,6 +165,11 @@ export class RektrsRolesService {
       crmWebhookEnabled:
         row.crmWebhookEnabled ?? REKTRS_SETTINGS_DEFAULTS.crmWebhookEnabled,
       crmWebhookSecretSet: !!row.crmWebhookSecret,
+      // W3 columns (schema-step-w3.sql) — same belt-and-braces treatment.
+      evergreenWeekday:
+        row.evergreenWeekday ?? REKTRS_SETTINGS_DEFAULTS.evergreenWeekday,
+      evergreenHour:
+        row.evergreenHour ?? REKTRS_SETTINGS_DEFAULTS.evergreenHour,
     };
   }
 

@@ -261,6 +261,20 @@ export class UpdateRektrsOrgSettingsDto {
   @IsOptional()
   @IsBoolean()
   clearCrmWebhookSecret?: boolean;
+
+  // W3 — evergreen recycler schedule: the weekly scan runs when the UTC
+  // weekday (0 = Sunday … 6 = Saturday) and hour match.
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(6)
+  evergreenWeekday?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(23)
+  evergreenHour?: number;
 }
 
 /**
@@ -324,6 +338,41 @@ export class ListLeadsQueryDto {
   @Min(1)
   @Max(200)
   take?: number;
+}
+
+/**
+ * W3 — the per-brand evergreen recycler configuration
+ * (AUTOMATION-WORKFLOWS.md W3). styleMode: VERBATIM (exact copy) |
+ * HOOK (prepend a rotating hook line) | ROTATE (alternate the two).
+ * hookLines are display text — stored verbatim, prepended verbatim.
+ */
+export class UpdateEvergreenSettingsDto {
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(3650)
+  minAgeDays?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(10)
+  topN?: number;
+
+  @IsOptional()
+  @IsIn(['VERBATIM', 'HOOK', 'ROTATE'])
+  styleMode?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @MaxLength(200, { each: true })
+  hookLines?: string[];
 }
 
 export class PauseBrandDto {

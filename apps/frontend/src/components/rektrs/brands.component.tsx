@@ -17,7 +17,12 @@ import {
   RektrsBrandPauseResult,
   RektrsBrandResumeResult,
   RektrsCrmWebhookTestResult,
+  RektrsEvergreenActivity,
+  RektrsEvergreenRunResult,
+  RektrsEvergreenSettings,
+  RektrsEvergreenStyleMode,
   RektrsLeadRule,
+  shortId,
   slugifyClient,
   useRektrsCall,
   useRektrsLoader,
@@ -549,6 +554,361 @@ const BrandLeadAutomation: FC<{ brand: RektrsBrand }> = ({ brand }) => {
   );
 };
 
+/**
+ * W3 — the brand's Evergreen Recycler settings + copies/run history
+ * (AUTOMATION-WORKFLOWS.md W3). Lives inside the brand edit modal next to
+ * lead automation; the org-wide weekly schedule lives in the OrgPolicyCard
+ * below. MANAGER configures and runs; creators see the copies it made.
+ * Copies are ordinary DRAFT posts — nothing here schedules or publishes.
+ */
+const BrandEvergreen: FC<{ brand: RektrsBrand }> = ({ brand }) => {
+  const t = useT();
+  const call = useRektrsCall();
+  const load = useRektrsLoader();
+  const toaster = useToaster();
+  const canManage = useHasRektrsFunction('MANAGER');
+  const canCreator = useHasRektrsFunction('CREATOR');
+  const canAnalyst = useHasRektrsFunction('ANALYST');
+  const canViewActivity = canManage || canCreator || canAnalyst;
+  const { data: settings, mutate } = useSWR<RektrsEvergreenSettings>(
+    `/rektrs/v1/brands/${brand.id}/evergreen`,
+    load,
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      refreshWhenHidden: false,
+      refreshWhenOffline: false,
+    }
+  );
+  const { data: activity, mutate: mutateActivity } =
+    useSWR<RektrsEvergreenActivity>(
+      canViewActivity
+        ? `/rektrs/v1/brands/${brand.id}/evergreen/copies`
+        : null,
+      load,
+      {
+        revalidateOnFocus: false,
+        revalidateOnReconnect: false,
+        refreshWhenHidden: false,
+        refreshWhenOffline: false,
+      }
+    );
+  const [enabled, setEnabled] = useState(false);
+  const [minAgeDays, setMinAgeDays] = useState('45');
+  const [topN, setTopN] = useState('3');
+  const [styleMode, setStyleMode] =
+    useState<RektrsEvergreenStyleMode>('ROTATE');
+  const [hookLines, setHookLines] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (settings) {
+      setEnabled(settings.enabled);
+      setMinAgeDays(String(settings.minAgeDays));
+      setTopN(String(settings.topN));
+      setStyleMode(settings.styleMode);
+      setHookLines(settings.hookLines.join('\n'));
+    }
+  }, [settings]);
+
+  const save = useCallback(async () => {
+    const age = Number.parseInt(minAgeDays, 10);
+    const n = Number.parseInt(topN, 10);
+    if (
+      !Number.isFinite(age) ||
+      age < 1 ||
+      age > 3650 ||
+      !Number.isFinite(n) ||
+      n < 1 ||
+      n > 10
+    ) {
+      setError(
+        t(
+          'rektrs_evergreen_numbers_invalid',
+          'Minimum age must be 1–3650 days and copies per run 1–10.'
+        )
+      );
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      await call(`/rektrs/v1/brands/${brand.id}/evergreen`, {
+        method: 'PUT',
+        ifMatch: settings?.version ?? undefined,
+        body: {
+          enabled,
+          minAgeDays: age,
+          topN: n,
+          styleMode,
+          hookLines: hookLines
+            .split('\n')
+            .map((s) => s.trim())
+            .filter(Boolean),
+        },
+      });
+      await mutate();
+      toaster.show(
+        t('rektrs_evergreen_saved', 'Evergreen recycler saved'),
+        'success'
+      );
+    } catch (e) {
+      setError(
+        readableRektrsError(
+          e,
+          t('rektrs_evergreen_save_failed', 'Could not save the evergreen recycler')
+        )
+      );
+    } finally {
+      setSaving(false);
+    }
+  }, [brand.id, call, enabled, hookLines, minAgeDays, mutate, settings?.version, styleMode, t, topN, toaster]);
+
+  const runNow = useCallback(async () => {
+    setRunning(true);
+    setError('');
+    try {
+      const result = await call<RektrsEvergreenRunResult>(
+        `/rektrs/v1/brands/${brand.id}/evergreen/run`,
+        { method: 'POST' }
+      );
+      await mutateActivity();
+      toaster.show(
+        result.copiedCount > 0
+          ? t(
+              'rektrs_evergreen_run_done',
+              'Evergreen run finished: {{copies}} new draft(s) created',
+              { copies: String(result.copiedCount) }
+            )
+          : t(
+              'rektrs_evergreen_run_empty',
+              'Evergreen run finished: no post qualified this time (see run history)'
+            ),
+        'success'
+      );
+    } catch (e) {
+      setError(
+        readableRektrsError(
+          e,
+          t('rektrs_evergreen_run_failed', 'The evergreen run could not be started')
+        )
+      );
+    } finally {
+      setRunning(false);
+    }
+  }, [brand.id, call, mutateActivity, t, toaster]);
+
+  if (!settings) {
+    return null;
+  }
+
+  const fieldLabel = 'text-[14px] font-[500]';
+  const fieldHint = 'text-[12px] opacity-60';
+  const inputCls =
+    'bg-newBgColorInner border border-newTableBorder rounded-[8px] px-[16px] py-[10px] text-[14px] outline-none w-full disabled:opacity-50';
+  const metric = (v: number | null) => (v === null ? '—' : String(v));
+
+  return (
+    <div className="flex flex-col gap-[10px]">
+      <div className="flex items-start justify-between gap-[16px]">
+        <div className="flex flex-col gap-[2px]">
+          <div className="text-[14px] font-[600]">
+            {t('rektrs_evergreen', 'Evergreen recycler')}
+          </div>
+          <div className="text-[12px] opacity-60 max-w-[520px]">
+            {t(
+              'rektrs_evergreen_hint',
+              'Once a week (schedule under Organization approval policy), this brand’s best-performing older posts are re-issued as refreshed DRAFT copies for your creators to edit and schedule. Nothing is ever auto-published — the normal approval flow applies when a copy is scheduled.'
+            )}
+          </div>
+        </div>
+        <button
+          type="button"
+          disabled={!canManage}
+          onClick={() => setEnabled(!enabled)}
+          className={clsx(
+            'relative w-[42px] h-[24px] rounded-full shrink-0 transition-colors',
+            enabled ? 'bg-[#612bd3]' : 'bg-gray-400/40',
+            !canManage && 'opacity-50 cursor-not-allowed'
+          )}
+          aria-pressed={enabled}
+        >
+          <span
+            className={clsx(
+              'absolute top-[3px] w-[18px] h-[18px] rounded-full bg-white transition-all',
+              enabled ? 'start-[21px]' : 'start-[3px]'
+            )}
+          />
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-[12px]">
+        <div className="flex flex-col gap-[6px] w-[160px]">
+          <div className={fieldLabel}>
+            {t('rektrs_evergreen_min_age', 'Minimum post age (days)')}
+          </div>
+          <input
+            type="number"
+            min={1}
+            max={3650}
+            className={inputCls}
+            disabled={!canManage}
+            value={minAgeDays}
+            onChange={(e) => setMinAgeDays(e.target.value)}
+          />
+        </div>
+        <div className="flex flex-col gap-[6px] w-[160px]">
+          <div className={fieldLabel}>
+            {t('rektrs_evergreen_top_n', 'Copies per run')}
+          </div>
+          <input
+            type="number"
+            min={1}
+            max={10}
+            className={inputCls}
+            disabled={!canManage}
+            value={topN}
+            onChange={(e) => setTopN(e.target.value)}
+          />
+        </div>
+        <div className="flex flex-col gap-[6px] w-[200px]">
+          <div className={fieldLabel}>
+            {t('rektrs_evergreen_style', 'Refresh style')}
+          </div>
+          <select
+            className={inputCls}
+            disabled={!canManage}
+            value={styleMode}
+            onChange={(e) =>
+              setStyleMode(e.target.value as RektrsEvergreenStyleMode)
+            }
+          >
+            <option value="ROTATE">
+              {t('rektrs_evergreen_style_rotate', 'Rotate verbatim / hook')}
+            </option>
+            <option value="VERBATIM">
+              {t('rektrs_evergreen_style_verbatim', 'Verbatim copy')}
+            </option>
+            <option value="HOOK">
+              {t('rektrs_evergreen_style_hook', 'Always prepend a hook line')}
+            </option>
+          </select>
+        </div>
+      </div>
+      <div className="flex flex-col gap-[6px]">
+        <div className={fieldLabel}>
+          {t('rektrs_evergreen_hook_lines', 'Hook lines (one per line)')}
+        </div>
+        <textarea
+          className={inputCls}
+          disabled={!canManage}
+          rows={3}
+          value={hookLines}
+          onChange={(e) => setHookLines(e.target.value)}
+          placeholder={'Throwback Thursday!\nThis one is still true today:'}
+        />
+        <div className={fieldHint}>
+          {t(
+            'rektrs_evergreen_hook_lines_hint',
+            'A hook line is prepended to the copy as its own paragraph. Media is always carried over unchanged; only the post text is refreshed.'
+          )}
+        </div>
+      </div>
+      {error ? <div className="text-red-400 text-[13px]">{error}</div> : null}
+      {canManage ? (
+        <div className="flex justify-end gap-[10px]">
+          <Button
+            type="button"
+            secondary
+            loading={running}
+            disabled={!settings.enabled}
+            onClick={runNow}
+          >
+            {t('rektrs_evergreen_run_now', 'Run now')}
+          </Button>
+          <Button type="button" secondary loading={saving} onClick={save}>
+            {t('rektrs_evergreen_save', 'Save evergreen recycler')}
+          </Button>
+        </div>
+      ) : null}
+      {canViewActivity && activity && activity.copies.length ? (
+        <div className="flex flex-col gap-[6px]">
+          <div className={fieldLabel}>
+            {t('rektrs_evergreen_copies', 'Recycled drafts')}
+          </div>
+          <div className="flex flex-col divide-y divide-newTableBorder border border-newTableBorder rounded-[8px]">
+            {activity.copies.slice(0, 10).map((copy) => (
+              <div
+                key={copy.id}
+                className="flex flex-wrap items-center gap-x-[10px] gap-y-[2px] px-[12px] py-[8px] text-[12px]"
+              >
+                <span className="inline-flex rounded-full bg-[#612bd3]/15 text-[#8b5cf6] px-[8px] py-[2px] text-[11px] font-[600]">
+                  {copy.style === 'HOOK'
+                    ? t('rektrs_evergreen_style_hook_badge', 'Hook')
+                    : t('rektrs_evergreen_style_verbatim_badge', 'Verbatim')}
+                </span>
+                <span className="opacity-70">
+                  {shortId(copy.sourcePostId)} → {shortId(copy.copyPostId)}
+                </span>
+                <span className="opacity-70">
+                  {t('rektrs_evergreen_metrics', '♥ {{likes}} · 💬 {{comments}} · ↗ {{shares}} · score {{score}}', {
+                    likes: metric(copy.metrics.likes),
+                    comments: metric(copy.metrics.comments),
+                    shares: metric(copy.metrics.shares),
+                    score: String(copy.metrics.score),
+                  })}
+                </span>
+                <span className="ms-auto opacity-50">
+                  {formatDateTime(copy.createdAt)}
+                </span>
+                {copy.hookLine ? (
+                  <div className="w-full opacity-60 truncate">
+                    “{copy.hookLine}”
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {canViewActivity && activity && activity.runs.length ? (
+        <div className="flex flex-col gap-[6px]">
+          <div className={fieldLabel}>
+            {t('rektrs_evergreen_runs', 'Run history')}
+          </div>
+          <div className="flex flex-col gap-[4px] text-[12px] opacity-80">
+            {activity.runs.slice(0, 5).map((run) => (
+              <div key={run.id} className="flex flex-wrap gap-x-[10px]">
+                <span>{formatDateTime(run.startedAt)}</span>
+                <span>
+                  {run.trigger === 'MANUAL'
+                    ? t('rektrs_evergreen_trigger_manual', 'Manual')
+                    : t('rektrs_evergreen_trigger_scheduled', 'Scheduled')}
+                </span>
+                <span>
+                  {t('rektrs_evergreen_run_summary', 'scanned {{scanned}} · copied {{copied}}', {
+                    scanned: String(run.scannedCount),
+                    copied: String(run.copiedCount),
+                  })}
+                </span>
+                {run.skippedReasons &&
+                Object.keys(run.skippedReasons.counts).length ? (
+                  <span className="opacity-60">
+                    {Object.entries(run.skippedReasons.counts)
+                      .map(([reason, n]) => `${reason} ×${n}`)
+                      .join(' · ')}
+                  </span>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
 const BrandFormModal: FC<{
   brand: RektrsBrand | null;
   onSaved: () => void;
@@ -736,6 +1096,7 @@ const BrandFormModal: FC<{
           </div>
           <BrandChannels brand={liveBrand} />
           <BrandLeadAutomation brand={liveBrand} />
+          <BrandEvergreen brand={liveBrand} />
         </div>
       ) : null}
     </div>
@@ -826,6 +1187,40 @@ const OrgPolicyCard: FC = () => {
     });
     setCrmSecret('');
   }, [crmUrl, crmSecret, patch]);
+
+  // W3 evergreen weekly schedule (UTC — organizations have no timezone
+  // setting yet; the labels say UTC so nobody guesses otherwise).
+  const [egWeekday, setEgWeekday] = useState('1');
+  const [egHour, setEgHour] = useState('6');
+  useEffect(() => {
+    if (settings) {
+      setEgWeekday(String(settings.evergreenWeekday ?? 1));
+      setEgHour(String(settings.evergreenHour ?? 6));
+    }
+  }, [settings?.evergreenWeekday, settings?.evergreenHour]);
+
+  const saveEvergreenSchedule = useCallback(async () => {
+    const weekday = Number.parseInt(egWeekday, 10);
+    const hour = Number.parseInt(egHour, 10);
+    if (
+      !Number.isFinite(weekday) ||
+      weekday < 0 ||
+      weekday > 6 ||
+      !Number.isFinite(hour) ||
+      hour < 0 ||
+      hour > 23
+    ) {
+      toaster.show(
+        t(
+          'rektrs_evergreen_schedule_invalid',
+          'Pick a weekday and an hour between 0 and 23'
+        ),
+        'warning'
+      );
+      return;
+    }
+    await patch({ evergreenWeekday: weekday, evergreenHour: hour });
+  }, [egWeekday, egHour, patch, t, toaster]);
 
   const testCrm = useCallback(async () => {
     setCrmTesting(true);
@@ -1087,6 +1482,72 @@ const OrgPolicyCard: FC = () => {
             ) : null}
           </div>
         ) : null}
+      </div>
+      <div className="border-t border-newTableBorder mt-[10px] pt-[12px]">
+        <div className="text-[15px] font-[600] mb-[2px]">
+          {t('rektrs_evergreen_schedule_title', 'Evergreen recycler schedule')}
+        </div>
+        <div className="text-[12px] opacity-60 max-w-[520px]">
+          {t(
+            'rektrs_evergreen_schedule_hint',
+            'When the evergreen recycler runs each week for brands that enabled it (per-brand settings live in the brand editor). Times are UTC — organizations do not have a timezone setting yet.'
+          )}
+        </div>
+        <div className="flex flex-wrap items-end gap-[12px] py-[8px]">
+          <div className="flex flex-col gap-[6px]">
+            <div className="text-[14px]">
+              {t('rektrs_evergreen_weekday', 'Weekday (UTC)')}
+            </div>
+            <div className="bg-newBgColorInner border-newTableBorder border rounded-[8px] flex items-center w-[160px]">
+              <select
+                disabled={!canManage || busy}
+                value={egWeekday}
+                onChange={(e) => setEgWeekday(e.target.value)}
+                className="h-[42px] bg-transparent outline-none flex-1 text-[14px] px-[12px] w-full"
+              >
+                {[
+                  ['1', t('rektrs_weekday_monday', 'Monday')],
+                  ['2', t('rektrs_weekday_tuesday', 'Tuesday')],
+                  ['3', t('rektrs_weekday_wednesday', 'Wednesday')],
+                  ['4', t('rektrs_weekday_thursday', 'Thursday')],
+                  ['5', t('rektrs_weekday_friday', 'Friday')],
+                  ['6', t('rektrs_weekday_saturday', 'Saturday')],
+                  ['0', t('rektrs_weekday_sunday', 'Sunday')],
+                ].map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="flex flex-col gap-[6px]">
+            <div className="text-[14px]">
+              {t('rektrs_evergreen_hour', 'Hour (UTC, 0–23)')}
+            </div>
+            <div className="bg-newBgColorInner border-newTableBorder border rounded-[8px] flex items-center w-[120px]">
+              <input
+                type="number"
+                min={0}
+                max={23}
+                disabled={!canManage || busy}
+                value={egHour}
+                onChange={(e) => setEgHour(e.target.value)}
+                className="h-[42px] bg-transparent outline-none flex-1 text-[14px] px-[16px] w-full"
+              />
+            </div>
+          </div>
+          {canManage ? (
+            <Button
+              type="button"
+              secondary
+              loading={busy}
+              onClick={saveEvergreenSchedule}
+            >
+              {t('rektrs_evergreen_schedule_save', 'Save evergreen schedule')}
+            </Button>
+          ) : null}
+        </div>
       </div>
       {!canManage ? (
         <div className="text-[12px] opacity-60 mt-[4px]">

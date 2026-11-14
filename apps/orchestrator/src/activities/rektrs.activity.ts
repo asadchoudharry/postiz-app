@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Activity, ActivityMethod } from 'nestjs-temporal-core';
 import { RektrsAlertsService } from '@gitroom/nestjs-libraries/rektrs/rektrs.alerts.service';
 import { RektrsLeadsService } from '@gitroom/nestjs-libraries/rektrs/rektrs.leads.service';
+import { RektrsEvergreenService } from '@gitroom/nestjs-libraries/rektrs/rektrs.evergreen.service';
 
 /**
  * REKTRS W2 — orchestrator face of the approval alert chain. The reminder /
@@ -11,13 +12,18 @@ import { RektrsLeadsService } from '@gitroom/nestjs-libraries/rektrs/rektrs.lead
  *
  * W1 joins the same activity: the comment poll sync + the CRM webhook
  * retry sweep (RektrsLeadsService), driven by rektrsLeadsWorkflow.
+ *
+ * W3 joins as well: the evergreen recycler's weekly sweep
+ * (RektrsEvergreenService.scanAllEnabled), driven by
+ * rektrsEvergreenWorkflow.
  */
 @Injectable()
 @Activity()
 export class RektrsActivity {
   constructor(
     private _rektrsAlertsService: RektrsAlertsService,
-    private _rektrsLeadsService: RektrsLeadsService
+    private _rektrsLeadsService: RektrsLeadsService,
+    private _rektrsEvergreenService: RektrsEvergreenService
   ) {}
 
   @ActivityMethod()
@@ -36,5 +42,10 @@ export class RektrsActivity {
   @ActivityMethod()
   async sweepRektrsLeadWebhooks() {
     return this._rektrsLeadsService.sweepLeadWebhooks();
+  }
+
+  @ActivityMethod()
+  async scanRektrsEvergreen() {
+    return this._rektrsEvergreenService.scanAllEnabled();
   }
 }

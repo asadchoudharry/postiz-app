@@ -13,7 +13,10 @@ export interface RektrsAuditWrite {
     | 'Post'
     | 'Policy'
     | 'Lead'
-    | 'LeadRule';
+    | 'LeadRule'
+    | 'EvergreenSettings'
+    | 'EvergreenRun'
+    | 'EvergreenCopy';
   entityId: string;
   beforeHash?: string;
   afterHash?: string;

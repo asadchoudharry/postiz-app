@@ -412,6 +412,123 @@ export class RektrsRepository {
     });
   }
 
+  // ── W3 evergreen recycler ─────────────────────────────────────────────────
+  evergreenSettingsByBrand(orgId: string, brandId: string, tx?: RektrsDb) {
+    return this.db(tx).evergreenSettings.findFirst({
+      where: { brandId, organizationId: orgId },
+    });
+  }
+
+  /** All enabled recycler configurations with their brand channels — the
+   *  scheduled sweep's work list (mirrors enabledLeadRules). */
+  enabledEvergreenSettings(tx?: RektrsDb) {
+    return this.db(tx).evergreenSettings.findMany({
+      where: { enabled: true },
+      include: {
+        brand: {
+          include: { channels: { include: { integration: true } } },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  /**
+   * Candidate pool for one brand scan: PUBLISHED root posts on the brand's
+   * channels whose publish moment is at or before `before` (the age
+   * cutoff) and that carry a provider release id (no release id = the
+   * provider never confirmed the post; it cannot be measured). Capped at
+   * 100, most recent first — the cap is a documented W3 residual.
+   */
+  evergreenCandidates(
+    orgId: string,
+    integrationIds: string[],
+    before: Date,
+    tx?: RektrsDb
+  ) {
+    if (!integrationIds.length) {
+      return Promise.resolve([]);
+    }
+    return this.db(tx).post.findMany({
+      where: {
+        organizationId: orgId,
+        integrationId: { in: integrationIds },
+        state: 'PUBLISHED',
+        parentPostId: null,
+        releaseId: { not: null },
+        publishDate: { lte: before },
+        deletedAt: null,
+      },
+      orderBy: { publishDate: 'desc' },
+      take: 100,
+    });
+  }
+
+  evergreenCopiesOfBrand(
+    orgId: string,
+    brandId: string,
+    take = 50,
+    tx?: RektrsDb
+  ) {
+    return this.db(tx).evergreenCopy.findMany({
+      where: { organizationId: orgId, brandId },
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(Math.max(take, 1), 200),
+    });
+  }
+
+  evergreenRunsOfBrand(orgId: string, brandId: string, take = 20, tx?: RektrsDb) {
+    return this.db(tx).evergreenRun.findMany({
+      where: { organizationId: orgId, brandId },
+      orderBy: { startedAt: 'desc' },
+      take: Math.min(Math.max(take, 1), 100),
+    });
+  }
+
+  /** The lineage row that made `postId` a copy, if it is one. */
+  evergreenCopyByCopyPostId(copyPostId: string, tx?: RektrsDb) {
+    return this.db(tx).evergreenCopy.findFirst({
+      where: { copyPostId },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  /** Every copy ever made of a source post (oldest first). */
+  evergreenCopiesForSource(brandId: string, sourcePostId: string, tx?: RektrsDb) {
+    return this.db(tx).evergreenCopy.findMany({
+      where: { brandId, sourcePostId },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  evergreenCopyInRun(
+    brandId: string,
+    sourcePostId: string,
+    runId: string,
+    tx?: RektrsDb
+  ) {
+    return this.db(tx).evergreenCopy.findFirst({
+      where: { brandId, sourcePostId, runId },
+    });
+  }
+
+  evergreenCopiesCountForBrand(brandId: string, tx?: RektrsDb) {
+    return this.db(tx).evergreenCopy.count({ where: { brandId } });
+  }
+
+  /** Most recent run of a brand — the sweep's once-a-week guard reads it. */
+  lastEvergreenRun(brandId: string, tx?: RektrsDb) {
+    return this.db(tx).evergreenRun.findFirst({
+      where: { brandId },
+      orderBy: { startedAt: 'desc' },
+    });
+  }
+
+  /** Tag links of a post (the root's tags are copied onto a copy's root). */
+  tagsOfPost(postId: string, tx?: RektrsDb) {
+    return this.db(tx).tagsPosts.findMany({ where: { postId } });
+  }
+
   // ── W2 reminder sweep reads ───────────────────────────────────────────────
   /**
    * IN_REVIEW submissions whose current round entered review at or before

@@ -50,7 +50,10 @@ export interface RektrsAlertMessage {
     // WhatsApp leg remains the documented no-op stub until a provider is
     // connected (AUTOMATION-WORKFLOWS.md W1/W2).
     | 'LEAD_CREATED'
-    | 'LEAD_HUMAN_REVIEW';
+    | 'LEAD_HUMAN_REVIEW'
+    // W3 evergreen recycler — a scan created fresh drafts for the brand's
+    // creators (AUTOMATION-WORKFLOWS.md W3).
+    | 'EVERGREEN_COPIES';
   subject: string;
   /** Plain-text body; always ends with the deep link. */
   body: string;
@@ -373,6 +376,44 @@ export class RektrsAlertsService {
       body: lead.humanReview
         ? `${who}'s comment on ${brand} matched the guard word "${lead.matchedGuardWord}" and was routed to the human-review queue — no DM was sent. Open the queue: ${link}`
         : `${who}'s comment on ${brand} matched "${lead.matchedKeyword}". A DM was sent and the lead is on its way to your CRM. Open leads: ${link}`,
+      link,
+      recipients,
+      respectChannelSettings: true,
+    });
+  }
+
+  // ── W3 evergreen notices ──────────────────────────────────────────────────
+  /**
+   * A recycler run created fresh DRAFT copies → tell the brand's CREATORS
+   * (they own turning drafts into scheduled posts). Honours the org
+   * channel toggles like the W2 chain. The copies are ordinary drafts —
+   * the alert links to the brand screen, where the copies/run history
+   * view lists them next to the drafts calendar.
+   */
+  async alertEvergreenCopies(
+    orgId: string,
+    input: {
+      brandId: string;
+      runId: string;
+      copies: Array<{ copyPostId: string; sourcePostId: string }>;
+    }
+  ) {
+    const recipients = await this.membersWithFunction(orgId, 'CREATOR');
+    if (!recipients.length || !input.copies.length) {
+      return;
+    }
+    const brand = await this.brandName(orgId, input.brandId);
+    const link = this.link(`/brands`);
+    await this.fanOut({
+      orgId,
+      kind: 'EVERGREEN_COPIES',
+      subject: `Evergreen drafts ready: ${brand}`,
+      body:
+        `The evergreen recycler created ${input.copies.length} fresh draft ` +
+        `cop${input.copies.length === 1 ? 'y' : 'ies'} of ${brand}'s ` +
+        `best-performing older posts. They are drafts only — nothing was ` +
+        `scheduled or published. Review, edit and schedule them from the ` +
+        `brand screen: ${link}`,
       link,
       recipients,
       respectChannelSettings: true,

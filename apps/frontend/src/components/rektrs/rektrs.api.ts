@@ -191,6 +191,9 @@ export interface RektrsOrgSettings {
   crmWebhookUrl: string | null;
   crmWebhookEnabled: boolean;
   crmWebhookSecretSet: boolean;
+  /** W3 evergreen schedule: UTC weekday (0 = Sunday … 6 = Saturday) + hour. */
+  evergreenWeekday: number;
+  evergreenHour: number;
 }
 
 /** W1: the per-brand comment-to-DM automation rule. */
@@ -242,6 +245,84 @@ export interface RektrsLead {
   createdAt: string;
   updatedAt: string;
   version: number;
+}
+
+export type RektrsEvergreenStyleMode = 'VERBATIM' | 'HOOK' | 'ROTATE';
+
+/** W3: the per-brand evergreen recycler configuration. */
+export interface RektrsEvergreenSettings {
+  brandId: string;
+  enabled: boolean;
+  minAgeDays: number;
+  topN: number;
+  styleMode: RektrsEvergreenStyleMode;
+  hookLines: string[];
+  version: number | null;
+}
+
+/** The engagement snapshot stored on a copy, exactly as fetched. */
+export interface RektrsEvergreenMetrics {
+  likes: number | null;
+  comments: number | null;
+  shares: number | null;
+  score: number;
+  series: { label: string; total: number }[];
+  fetchedAt: string;
+}
+
+export interface RektrsEvergreenCopy {
+  id: string;
+  organizationId: string;
+  brandId: string;
+  runId: string;
+  sourcePostId: string;
+  copyPostId: string;
+  style: 'VERBATIM' | 'HOOK';
+  hookLine: string | null;
+  metrics: RektrsEvergreenMetrics;
+  createdAt: string;
+}
+
+export interface RektrsEvergreenRun {
+  id: string;
+  organizationId: string;
+  brandId: string;
+  trigger: 'SCHEDULED' | 'MANUAL';
+  startedAt: string;
+  finishedAt: string | null;
+  scannedCount: number;
+  copiedCount: number;
+  skippedReasons: {
+    counts: Record<string, number>;
+    entries: { postId?: string; reason: string }[];
+  } | null;
+  createdAt: string;
+}
+
+export interface RektrsEvergreenActivity {
+  copies: RektrsEvergreenCopy[];
+  runs: RektrsEvergreenRun[];
+}
+
+/** Result of POST /rektrs/v1/brands/:id/evergreen/run (W3). */
+export interface RektrsEvergreenRunResult {
+  runId: string | null;
+  brandId: string;
+  trigger: 'SCHEDULED' | 'MANUAL';
+  skipped?: string;
+  scannedCount: number;
+  copiedCount: number;
+  skippedReasons: {
+    counts: Record<string, number>;
+    entries: { postId?: string; reason: string }[];
+  };
+  copies: {
+    sourcePostId: string;
+    copyPostId: string;
+    style: string;
+    hookLine: string | null;
+    metrics: RektrsEvergreenMetrics;
+  }[];
 }
 
 /** Result of POST /rektrs/v1/org/crm-webhook/test (W1). */
@@ -330,6 +411,10 @@ const READABLE_BY_CODE: Record<string, string> = {
   LEAD_RULE_TEMPLATE_REQUIRED:
     'Write the DM template before enabling the lead machine.',
   LEAD_NOT_ACTIONABLE: 'This lead cannot be changed in its current state.',
+  EVERGREEN_HOOK_REQUIRED:
+    'Add at least one hook line before enabling the HOOK style.',
+  EVERGREEN_NOT_ENABLED:
+    'Enable the evergreen recycler for this brand before running it.',
 };
 
 export const readableRektrsError = (error: unknown, fallback: string) => {
