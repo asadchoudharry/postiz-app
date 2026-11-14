@@ -397,6 +397,72 @@ export interface RektrsMilestoneCtaRunResult {
   }[];
 }
 
+/** W6: the per-brand inbox triage configuration. */
+export interface RektrsInboxSettings {
+  brandId: string;
+  enabled: boolean;
+  workingLanguage: string;
+  faqPrice: string;
+  faqTiming: string;
+  faqLocation: string;
+  faqDelivery: string;
+  extraComplaintKeywords: string[];
+  version: number | null;
+}
+
+export type RektrsInboxItemStatus =
+  | 'NEW'
+  | 'QUEUED'
+  | 'DRAFTED'
+  | 'SENT'
+  | 'DISMISSED';
+
+export type RektrsInboxItemCategory =
+  | 'COMPLAINT'
+  | 'FAQ_PRICE'
+  | 'FAQ_TIMING'
+  | 'FAQ_LOCATION'
+  | 'FAQ_DELIVERY'
+  | 'GENERAL';
+
+export type RektrsInboxTranslationStatus =
+  | 'NOT_NEEDED'
+  | 'TRANSLATED'
+  | 'UNAVAILABLE'
+  | 'FAILED';
+
+/** W6: one triaged inbound comment. */
+export interface RektrsTriageItem {
+  id: string;
+  organizationId: string;
+  brandId: string;
+  integrationId: string;
+  providerIdentifier: string;
+  postId: string | null;
+  providerPostId: string;
+  providerCommentId: string;
+  authorId: string;
+  authorName: string | null;
+  originalText: string;
+  detectedLanguage: string;
+  translatedText: string | null;
+  translationStatus: RektrsInboxTranslationStatus;
+  category: RektrsInboxItemCategory;
+  matchedPhrase: string | null;
+  status: RektrsInboxItemStatus;
+  suggestedReply: string | null;
+  sentText: string | null;
+  replyCommentId: string | null;
+  sendError: string | null;
+  sentAt: string | null;
+  sentById: string | null;
+  note: string | null;
+  commentAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  version: number;
+}
+
 /** Result of POST /rektrs/v1/org/crm-webhook/test (W1). */
 export interface RektrsCrmWebhookTestResult {
   ok: boolean;

@@ -614,6 +614,74 @@ export class RektrsRepository {
     });
   }
 
+  // ── W6 inbox triage ───────────────────────────────────────────────────────
+  inboxSettingsByBrand(orgId: string, brandId: string, tx?: RektrsDb) {
+    return this.db(tx).inboxSettings.findFirst({
+      where: { brandId, organizationId: orgId },
+    });
+  }
+
+  /** All enabled triage configurations with their brand channels — the
+   *  poll-coverage list the W1 sync uses so triage-only brands (no lead
+   *  rule) still get their comments fetched (mirrors enabledLeadRules). */
+  enabledInboxSettings(tx?: RektrsDb) {
+    return this.db(tx).inboxSettings.findMany({
+      where: { enabled: true },
+      include: {
+        brand: {
+          include: { channels: { include: { integration: true } } },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  inboxItemById(orgId: string, brandId: string, id: string, tx?: RektrsDb) {
+    return this.db(tx).inboxItem.findFirst({
+      where: { id, organizationId: orgId, brandId },
+    });
+  }
+
+  inboxItemsOfBrand(
+    orgId: string,
+    brandId: string,
+    filters: { status?: string; category?: string; take?: number },
+    tx?: RektrsDb
+  ) {
+    return this.db(tx).inboxItem.findMany({
+      where: {
+        organizationId: orgId,
+        brandId,
+        ...(filters.status ? { status: filters.status } : {}),
+        ...(filters.category ? { category: filters.category } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(Math.max(filters.take || 100, 1), 200),
+    });
+  }
+
+  inboxItemsOfOrg(
+    orgId: string,
+    filters: {
+      status?: string;
+      category?: string;
+      brandId?: string;
+      take?: number;
+    },
+    tx?: RektrsDb
+  ) {
+    return this.db(tx).inboxItem.findMany({
+      where: {
+        organizationId: orgId,
+        ...(filters.status ? { status: filters.status } : {}),
+        ...(filters.category ? { category: filters.category } : {}),
+        ...(filters.brandId ? { brandId: filters.brandId } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(Math.max(filters.take || 100, 1), 200),
+    });
+  }
+
   // ── W2 reminder sweep reads ───────────────────────────────────────────────
   /**
    * IN_REVIEW submissions whose current round entered review at or before

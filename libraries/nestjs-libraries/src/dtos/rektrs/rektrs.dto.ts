@@ -405,6 +405,97 @@ export class UpdateMilestoneCtaSettingsDto {
   ctaUrl?: string;
 }
 
+/**
+ * W6 — the per-brand inbox triage configuration (AUTOMATION-WORKFLOWS.md
+ * W6). workingLanguage: en | ur | ar | ur-Latn. The faq* fields are reply
+ * templates with {brandName} / {name} placeholders, stored verbatim.
+ * extraComplaintKeywords are added to the built-in complaint lexicon.
+ */
+export class UpdateInboxSettingsDto {
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @IsOptional()
+  @IsIn(['en', 'ur', 'ar', 'ur-Latn'])
+  workingLanguage?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  faqPrice?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  faqTiming?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  faqLocation?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  faqDelivery?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  @MaxLength(100, { each: true })
+  extraComplaintKeywords?: string[];
+}
+
+export const REKTRS_INBOX_STATUSES = [
+  'NEW',
+  'QUEUED',
+  'DRAFTED',
+  'SENT',
+  'DISMISSED',
+] as const;
+
+export const REKTRS_INBOX_CATEGORIES = [
+  'COMPLAINT',
+  'FAQ_PRICE',
+  'FAQ_TIMING',
+  'FAQ_LOCATION',
+  'FAQ_DELIVERY',
+  'GENERAL',
+] as const;
+
+export class ListInboxItemsQueryDto {
+  @IsOptional()
+  @IsIn(REKTRS_INBOX_STATUSES as unknown as string[])
+  status?: string;
+
+  @IsOptional()
+  @IsIn(REKTRS_INBOX_CATEGORIES as unknown as string[])
+  category?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  brandId?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  take?: number;
+}
+
+/** W6 — one-tap send of a drafted reply; an optional edited text wins
+ *  over the stored draft (the sent text is recorded on the item). */
+export class SendInboxReplyDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  text?: string;
+}
+
 export class PauseBrandDto {
   @IsOptional()
   @IsString()

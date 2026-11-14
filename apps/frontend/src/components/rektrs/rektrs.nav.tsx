@@ -67,6 +67,18 @@ const InboxIcon = (
   </svg>
 );
 
+const TriageIcon = (
+  <svg {...iconProps}>
+    <path
+      d="M4 4.5h12a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5H10l-3.5 3v-3H4A1.5 1.5 0 0 1 2.5 12V6A1.5 1.5 0 0 1 4 4.5ZM6 8h8M6 10.5h5"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
 const SubmissionsIcon = (
   <svg {...iconProps}>
     <path
@@ -128,6 +140,20 @@ export const useRektrsMenuItems = (): RektrsMenuItem[] => {
     }
   );
 
+  // W6: the inbox badge counts complaints waiting in the triage queue.
+  // Without an inbox-viewing function the request fails and, exactly
+  // like the other badges, only the badge stays hidden.
+  const { data: inboxQueue } = useSWR<{ count: number }>(
+    REKTRS_BRAND_ENABLED ? '/rektrs/v1/inbox/queue-count' : null,
+    load,
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      refreshWhenHidden: false,
+      refreshWhenOffline: false,
+    }
+  );
+
   if (!REKTRS_BRAND_ENABLED) {
     return [];
   }
@@ -146,6 +172,12 @@ export const useRektrsMenuItems = (): RektrsMenuItem[] => {
       icon: LeadsIcon,
       path: '/leads',
       badge: humanReview?.count || 0,
+    },
+    {
+      name: t('rektrs_inbox', 'Inbox'),
+      icon: TriageIcon,
+      path: '/inbox',
+      badge: inboxQueue?.count || 0,
     },
     {
       name: t('review_inbox', 'Review inbox'),

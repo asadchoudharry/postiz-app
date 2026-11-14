@@ -50,6 +50,9 @@ import { RektrsEvergreenService } from '@gitroom/nestjs-libraries/rektrs/rektrs.
 import { RektrsEngagementGateway } from '@gitroom/nestjs-libraries/rektrs/rektrs.evergreen-providers';
 import { RektrsMilestoneCtaService } from '@gitroom/nestjs-libraries/rektrs/rektrs.milestone-cta.service';
 import { RektrsCtaCommentGateway } from '@gitroom/nestjs-libraries/rektrs/rektrs.milestone-cta-providers';
+import { RektrsInboxService } from '@gitroom/nestjs-libraries/rektrs/rektrs.inbox.service';
+import { RektrsTranslationService } from '@gitroom/nestjs-libraries/rektrs/rektrs.inbox-translation';
+import { RektrsInboxReplyGateway } from '@gitroom/nestjs-libraries/rektrs/rektrs.inbox-providers';
 import { SetsRepository } from '@gitroom/nestjs-libraries/database/prisma/sets/sets.repository';
 import { ThirdPartyRepository } from '@gitroom/nestjs-libraries/database/prisma/third-party/third-party.repository';
 import { ThirdPartyService } from '@gitroom/nestjs-libraries/database/prisma/third-party/third-party.service';
@@ -126,6 +129,9 @@ import { AdminStatsService } from '@gitroom/nestjs-libraries/database/prisma/adm
     RektrsEngagementGateway,
     RektrsMilestoneCtaService,
     RektrsCtaCommentGateway,
+    RektrsInboxService,
+    RektrsTranslationService,
+    RektrsInboxReplyGateway,
     ThirdPartyRepository,
     ThirdPartyService,
     OAuthRepository,

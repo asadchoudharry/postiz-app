@@ -53,7 +53,10 @@ export interface RektrsAlertMessage {
     | 'LEAD_HUMAN_REVIEW'
     // W3 evergreen recycler — a scan created fresh drafts for the brand's
     // creators (AUTOMATION-WORKFLOWS.md W3).
-    | 'EVERGREEN_COPIES';
+    | 'EVERGREEN_COPIES'
+    // W6 inbox triage — a complaint was queued for a human
+    // (AUTOMATION-WORKFLOWS.md W6).
+    | 'INBOX_COMPLAINT';
   subject: string;
   /** Plain-text body; always ends with the deep link. */
   body: string;
@@ -414,6 +417,48 @@ export class RektrsAlertsService {
         `best-performing older posts. They are drafts only — nothing was ` +
         `scheduled or published. Review, edit and schedule them from the ` +
         `brand screen: ${link}`,
+      link,
+      recipients,
+      respectChannelSettings: true,
+    });
+  }
+
+  // ── W6 inbox triage notices ───────────────────────────────────────────────
+  /**
+   * A complaint landed in a brand's inbox queue → tell the org's
+   * MANAGERs (the queue's owners). Honours the org channel toggles like
+   * the W1/W3 notices — an inbox alert is operational, not a crisis
+   * notice. The deep link is the W6 inbox screen.
+   */
+  async alertInboxComplaint(
+    orgId: string,
+    input: {
+      itemId: string;
+      brandId: string;
+      authorName?: string | null;
+      matchedPhrase?: string | null;
+      excerpt: string;
+    }
+  ) {
+    const recipients = await this.membersWithFunction(orgId, 'MANAGER');
+    if (!recipients.length) {
+      return;
+    }
+    const brand = await this.brandName(orgId, input.brandId);
+    const link = this.link('/inbox');
+    const who = input.authorName || 'A commenter';
+    const excerpt =
+      input.excerpt.length > 140
+        ? `${input.excerpt.slice(0, 140)}…`
+        : input.excerpt;
+    await this.fanOut({
+      orgId,
+      kind: 'INBOX_COMPLAINT',
+      subject: `Complaint queued: ${brand}`,
+      body:
+        `${who}'s comment on ${brand} matched the complaint word "${input.matchedPhrase}" ` +
+        `and was queued in the inbox for a human — nothing was auto-replied. ` +
+        `Comment: "${excerpt}". Open the inbox: ${link}`,
       link,
       recipients,
       respectChannelSettings: true,

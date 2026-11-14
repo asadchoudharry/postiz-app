@@ -10,6 +10,8 @@ import {
   RektrsBrand,
   RektrsCampaign,
   RektrsFunction,
+  RektrsInboxItemCategory,
+  RektrsInboxItemStatus,
   RektrsIntegration,
   RektrsLeadStatus,
   RektrsOrgSettings,
@@ -186,6 +188,63 @@ export const LeadStatusBadge: FC<{ status: RektrsLeadStatus }> = ({
     )}
   >
     {LEAD_STATUS_LABELS[status] || status}
+  </span>
+);
+
+/** W6 inbox triage statuses (AUTOMATION-WORKFLOWS.md W6) — honest states only. */
+export const INBOX_STATUS_STYLES: Record<RektrsInboxItemStatus, string> = {
+  NEW: 'bg-gray-500/15 text-gray-500',
+  QUEUED: 'bg-red-500/15 text-red-600',
+  DRAFTED: 'bg-amber-500/15 text-amber-600',
+  SENT: 'bg-emerald-500/15 text-emerald-600',
+  DISMISSED: 'bg-gray-500/15 text-gray-500',
+};
+
+export const INBOX_STATUS_LABELS: Record<RektrsInboxItemStatus, string> = {
+  NEW: 'New',
+  QUEUED: 'Needs a human',
+  DRAFTED: 'Draft ready',
+  SENT: 'Reply sent',
+  DISMISSED: 'Dismissed',
+};
+
+export const InboxStatusBadge: FC<{ status: RektrsInboxItemStatus }> = ({
+  status,
+}) => (
+  <span
+    className={clsx(
+      'inline-flex items-center rounded-full px-[8px] py-[2px] text-[11px] font-[600] whitespace-nowrap',
+      INBOX_STATUS_STYLES[status] || INBOX_STATUS_STYLES.NEW
+    )}
+  >
+    {INBOX_STATUS_LABELS[status] || status}
+  </span>
+);
+
+/** W6 triage categories. */
+export const INBOX_CATEGORY_LABELS: Record<RektrsInboxItemCategory, string> = {
+  COMPLAINT: 'Complaint',
+  FAQ_PRICE: 'FAQ · Price',
+  FAQ_TIMING: 'FAQ · Timing',
+  FAQ_LOCATION: 'FAQ · Location',
+  FAQ_DELIVERY: 'FAQ · Delivery',
+  GENERAL: 'General',
+};
+
+export const InboxCategoryBadge: FC<{ category: RektrsInboxItemCategory }> = ({
+  category,
+}) => (
+  <span
+    className={clsx(
+      'inline-flex items-center rounded-full px-[8px] py-[2px] text-[11px] font-[600] whitespace-nowrap',
+      category === 'COMPLAINT'
+        ? 'bg-red-500/15 text-red-600'
+        : category === 'GENERAL'
+          ? 'bg-gray-500/15 text-gray-500'
+          : 'bg-blue-500/15 text-blue-600'
+    )}
+  >
+    {INBOX_CATEGORY_LABELS[category] || category}
   </span>
 );
 

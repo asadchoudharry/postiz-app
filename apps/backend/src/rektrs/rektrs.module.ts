@@ -11,6 +11,7 @@ import {
   RektrsOrgController,
 } from '@gitroom/backend/rektrs/rektrs.org.controller';
 import { RektrsLeadsController } from '@gitroom/backend/rektrs/rektrs.leads.controller';
+import { RektrsInboxController } from '@gitroom/backend/rektrs/rektrs.inbox.controller';
 import { RektrsMetaWebhookController } from '@gitroom/backend/rektrs/rektrs.meta.webhook.controller';
 import { RektrsFunctionsGuard } from '@gitroom/backend/rektrs/rektrs.functions.guard';
 
@@ -22,6 +23,7 @@ const rektrsControllers = [
   RektrsOrgController,
   RektrsAuditController,
   RektrsLeadsController,
+  RektrsInboxController,
 ];
 
 /**

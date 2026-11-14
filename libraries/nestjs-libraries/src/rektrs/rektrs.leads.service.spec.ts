@@ -33,6 +33,11 @@ jest.mock('@gitroom/nestjs-libraries/rektrs/rektrs.audit.service', () => ({
 jest.mock('@gitroom/nestjs-libraries/rektrs/rektrs.lead-providers', () => ({
   RektrsCommentGateway: class {},
 }));
+// W6: the triage hook is optional in this harness (never constructed
+// here); its real behaviour is covered by rektrs.inbox.service.spec.ts.
+jest.mock('@gitroom/nestjs-libraries/rektrs/rektrs.inbox.service', () => ({
+  RektrsInboxService: class {},
+}));
 
 const ORG = 'org-1';
 const SECRET = 'test-signing-secret-0123456789';

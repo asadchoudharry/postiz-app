@@ -8,6 +8,7 @@ import {
   Patch,
   Post,
   Put,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
@@ -19,12 +20,16 @@ import { RektrsBrandControlService } from '@gitroom/nestjs-libraries/rektrs/rekt
 import { RektrsLeadsService } from '@gitroom/nestjs-libraries/rektrs/rektrs.leads.service';
 import { RektrsEvergreenService } from '@gitroom/nestjs-libraries/rektrs/rektrs.evergreen.service';
 import { RektrsMilestoneCtaService } from '@gitroom/nestjs-libraries/rektrs/rektrs.milestone-cta.service';
+import { RektrsInboxService } from '@gitroom/nestjs-libraries/rektrs/rektrs.inbox.service';
 import {
   AssignChannelDto,
   CreateBrandDto,
+  ListInboxItemsQueryDto,
   PauseBrandDto,
+  SendInboxReplyDto,
   UpdateBrandDto,
   UpdateEvergreenSettingsDto,
+  UpdateInboxSettingsDto,
   UpdateLeadRuleDto,
   UpdateMilestoneCtaSettingsDto,
 } from '@gitroom/nestjs-libraries/dtos/rektrs/rektrs.dto';
@@ -48,7 +53,8 @@ export class RektrsBrandsController {
     private _brandControl: RektrsBrandControlService,
     private _leads: RektrsLeadsService,
     private _evergreen: RektrsEvergreenService,
-    private _milestoneCta: RektrsMilestoneCtaService
+    private _milestoneCta: RektrsMilestoneCtaService,
+    private _inbox: RektrsInboxService
   ) {}
 
   @Post('/')
@@ -262,6 +268,75 @@ export class RektrsBrandsController {
     @RealIP() ip: string
   ) {
     return this._milestoneCta.runBrandNow(org.id, sessionActor(user, ip), id);
+  }
+
+  // ── W6 inbox triage: per-brand configuration, items, human actions ──────
+  @Get('/:id/inbox-triage')
+  async getInboxSettings(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string
+  ) {
+    return this._inbox.getInboxSettings(org.id, id);
+  }
+
+  @Put('/:id/inbox-triage')
+  @RequireRektrsFunctions('MANAGER')
+  async updateInboxSettings(
+    @GetOrgFromRequest() org: Organization,
+    @GetUserFromRequest() user: User,
+    @Param('id') id: string,
+    @Body() body: UpdateInboxSettingsDto,
+    @Headers('if-match') ifMatch: string,
+    @RealIP() ip: string
+  ) {
+    return this._inbox.updateInboxSettings(
+      org.id,
+      sessionActor(user, ip),
+      id,
+      body,
+      parseIfMatch(ifMatch)
+    );
+  }
+
+  @Get('/:id/inbox')
+  @RequireRektrsFunctions('MANAGER', 'CREATOR', 'ANALYST')
+  async listBrandInboxItems(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string,
+    @Query() query: ListInboxItemsQueryDto
+  ) {
+    return this._inbox.listBrandItems(org.id, id, query);
+  }
+
+  @Post('/:id/inbox/:itemId/send')
+  @RequireRektrsFunctions('MANAGER', 'CREATOR', 'ANALYST')
+  async sendInboxReply(
+    @GetOrgFromRequest() org: Organization,
+    @GetUserFromRequest() user: User,
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Body() body: SendInboxReplyDto,
+    @RealIP() ip: string
+  ) {
+    return this._inbox.sendReply(
+      org.id,
+      sessionActor(user, ip),
+      id,
+      itemId,
+      body
+    );
+  }
+
+  @Post('/:id/inbox/:itemId/dismiss')
+  @RequireRektrsFunctions('MANAGER', 'CREATOR', 'ANALYST')
+  async dismissInboxItem(
+    @GetOrgFromRequest() org: Organization,
+    @GetUserFromRequest() user: User,
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @RealIP() ip: string
+  ) {
+    return this._inbox.dismissItem(org.id, sessionActor(user, ip), id, itemId);
   }
 
   @Delete('/:id/channels/:integrationId')

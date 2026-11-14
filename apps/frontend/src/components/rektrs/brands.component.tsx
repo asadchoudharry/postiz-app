@@ -21,6 +21,7 @@ import {
   RektrsEvergreenRunResult,
   RektrsEvergreenSettings,
   RektrsEvergreenStyleMode,
+  RektrsInboxSettings,
   RektrsLeadRule,
   RektrsMilestoneCtaAction,
   RektrsMilestoneCtaActivity,
@@ -1260,6 +1261,232 @@ const BrandMilestoneCta: FC<{ brand: RektrsBrand }> = ({ brand }) => {
   );
 };
 
+/**
+ * W6 — the brand's Inbox Triage settings (AUTOMATION-WORKFLOWS.md W6).
+ * Lives inside the brand edit modal under the milestone auto-CTA. When
+ * enabled, new comments on this brand's channels are classified
+ * (complaint → human queue + alert; FAQ → suggested-reply draft;
+ * everything else listed), translated into the working language when a
+ * translation provider is configured, and listed on the Inbox screen.
+ * Nothing is ever auto-sent — a human sends drafts from the inbox.
+ * MANAGER configures.
+ */
+const BrandInboxTriage: FC<{ brand: RektrsBrand }> = ({ brand }) => {
+  const t = useT();
+  const call = useRektrsCall();
+  const load = useRektrsLoader();
+  const toaster = useToaster();
+  const canManage = useHasRektrsFunction('MANAGER');
+  const { data: settings, mutate } = useSWR<RektrsInboxSettings>(
+    `/rektrs/v1/brands/${brand.id}/inbox-triage`,
+    load,
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      refreshWhenHidden: false,
+      refreshWhenOffline: false,
+    }
+  );
+  const [enabled, setEnabled] = useState(false);
+  const [workingLanguage, setWorkingLanguage] = useState('en');
+  const [faqPrice, setFaqPrice] = useState('');
+  const [faqTiming, setFaqTiming] = useState('');
+  const [faqLocation, setFaqLocation] = useState('');
+  const [faqDelivery, setFaqDelivery] = useState('');
+  const [extraKeywords, setExtraKeywords] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (settings) {
+      setEnabled(settings.enabled);
+      setWorkingLanguage(settings.workingLanguage);
+      setFaqPrice(settings.faqPrice);
+      setFaqTiming(settings.faqTiming);
+      setFaqLocation(settings.faqLocation);
+      setFaqDelivery(settings.faqDelivery);
+      setExtraKeywords((settings.extraComplaintKeywords || []).join('\n'));
+    }
+  }, [settings]);
+
+  const save = useCallback(async () => {
+    setSaving(true);
+    setError('');
+    try {
+      await call(`/rektrs/v1/brands/${brand.id}/inbox-triage`, {
+        method: 'PUT',
+        ifMatch: settings?.version ?? undefined,
+        body: {
+          enabled,
+          workingLanguage,
+          faqPrice: faqPrice.trim(),
+          faqTiming: faqTiming.trim(),
+          faqLocation: faqLocation.trim(),
+          faqDelivery: faqDelivery.trim(),
+          extraComplaintKeywords: extraKeywords
+            .split(/[\n,]+/)
+            .map((k) => k.trim())
+            .filter(Boolean),
+        },
+      });
+      await mutate();
+      toaster.show(
+        t('rektrs_inbox_triage_saved', 'Inbox triage saved'),
+        'success'
+      );
+    } catch (e) {
+      setError(
+        readableRektrsError(
+          e,
+          t('rektrs_inbox_triage_save_failed', 'Could not save the inbox triage settings')
+        )
+      );
+    } finally {
+      setSaving(false);
+    }
+  }, [brand.id, call, enabled, extraKeywords, faqDelivery, faqLocation, faqPrice, faqTiming, mutate, settings?.version, t, toaster, workingLanguage]);
+
+  if (!settings) {
+    return null;
+  }
+
+  const fieldLabel = 'text-[14px] font-[500]';
+  const fieldHint = 'text-[12px] opacity-60';
+  const inputCls =
+    'bg-newBgColorInner border border-newTableBorder rounded-[8px] px-[16px] py-[10px] text-[14px] outline-none w-full disabled:opacity-50';
+
+  const templateField = (
+    label: string,
+    value: string,
+    setValue: (v: string) => void,
+    placeholder: string
+  ) => (
+    <div className="flex flex-col gap-[6px]">
+      <div className={fieldLabel}>{label}</div>
+      <textarea
+        className={inputCls}
+        rows={2}
+        disabled={!canManage}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder={placeholder}
+      />
+    </div>
+  );
+
+  return (
+    <div className="flex flex-col gap-[10px]">
+      <div className="flex items-start justify-between gap-[16px]">
+        <div className="flex flex-col gap-[2px]">
+          <div className="text-[14px] font-[600]">
+            {t('rektrs_inbox_triage', 'Inbox triage')}
+          </div>
+          <div className="text-[12px] opacity-60 max-w-[520px]">
+            {t(
+              'rektrs_inbox_triage_hint',
+              'New comments on this brand’s channels are sorted automatically: complaints go to the inbox queue and alert managers, FAQ questions (price, timing, location, delivery) get a suggested reply drafted from your templates below, and everything is translated into the working language when a translation provider is configured. Nothing is ever auto-sent — a person sends each draft from the Inbox screen.'
+            )}
+          </div>
+        </div>
+        <button
+          type="button"
+          disabled={!canManage}
+          onClick={() => setEnabled(!enabled)}
+          className={clsx(
+            'relative w-[42px] h-[24px] rounded-full shrink-0 transition-colors',
+            enabled ? 'bg-[#612bd3]' : 'bg-gray-400/40',
+            !canManage && 'opacity-50 cursor-not-allowed'
+          )}
+          aria-pressed={enabled}
+        >
+          <span
+            className={clsx(
+              'absolute top-[3px] w-[18px] h-[18px] rounded-full bg-white transition-all',
+              enabled ? 'start-[21px]' : 'start-[3px]'
+            )}
+          />
+        </button>
+      </div>
+      <div className="flex flex-col gap-[6px] w-[220px]">
+        <div className={fieldLabel}>
+          {t('rektrs_inbox_working_language', 'Working language')}
+        </div>
+        <select
+          className={inputCls}
+          disabled={!canManage}
+          value={workingLanguage}
+          onChange={(e) => setWorkingLanguage(e.target.value)}
+        >
+          <option value="en">English</option>
+          <option value="ur">Urdu (اردو)</option>
+          <option value="ar">Arabic (العربية)</option>
+          <option value="ur-Latn">Roman Urdu</option>
+        </select>
+        <div className={fieldHint}>
+          {t(
+            'rektrs_inbox_working_language_hint',
+            'Comments in other languages are translated into this one in the inbox.'
+          )}
+        </div>
+      </div>
+      {templateField(
+        t('rektrs_inbox_faq_price', 'FAQ reply — Price'),
+        faqPrice,
+        setFaqPrice,
+        t('rektrs_inbox_faq_price_placeholder', 'Hi {name}, our prices start at Rs 500. — {brandName}')
+      )}
+      {templateField(
+        t('rektrs_inbox_faq_timing', 'FAQ reply — Timing'),
+        faqTiming,
+        setFaqTiming,
+        t('rektrs_inbox_faq_timing_placeholder', 'Hi {name}, we are open 9am–9pm, Monday to Saturday.')
+      )}
+      {templateField(
+        t('rektrs_inbox_faq_location', 'FAQ reply — Location'),
+        faqLocation,
+        setFaqLocation,
+        t('rektrs_inbox_faq_location_placeholder', 'Hi {name}, find us at Main Bazaar Road — directions: …')
+      )}
+      {templateField(
+        t('rektrs_inbox_faq_delivery', 'FAQ reply — Delivery'),
+        faqDelivery,
+        setFaqDelivery,
+        t('rektrs_inbox_faq_delivery_placeholder', 'Hi {name}, yes — home delivery is available in 2–3 days.')
+      )}
+      <div className="flex flex-col gap-[6px]">
+        <div className={fieldLabel}>
+          {t('rektrs_inbox_extra_keywords', 'Extra complaint words')}
+        </div>
+        <textarea
+          className={inputCls}
+          rows={2}
+          disabled={!canManage}
+          value={extraKeywords}
+          onChange={(e) => setExtraKeywords(e.target.value)}
+          placeholder={t(
+            'rektrs_inbox_extra_keywords_placeholder',
+            'One per line — added to the built-in complaint words (refund, fraud, scam, …)'
+          )}
+        />
+        <div className={fieldHint}>
+          {t(
+            'rektrs_inbox_template_hint',
+            'Templates can use {name} (the commenter) and {brandName}. A topic with an empty template still classifies — the comment lands in the inbox without a draft.'
+          )}
+        </div>
+      </div>
+      {error ? <div className="text-red-400 text-[13px]">{error}</div> : null}
+      {canManage ? (
+        <div className="flex justify-end gap-[10px]">
+          <Button type="button" secondary loading={saving} onClick={save}>
+            {t('rektrs_inbox_triage_save', 'Save inbox triage')}
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
 const BrandFormModal: FC<{
   brand: RektrsBrand | null;
   onSaved: () => void;
@@ -1449,6 +1676,7 @@ const BrandFormModal: FC<{
           <BrandLeadAutomation brand={liveBrand} />
           <BrandEvergreen brand={liveBrand} />
           <BrandMilestoneCta brand={liveBrand} />
+          <BrandInboxTriage brand={liveBrand} />
         </div>
       ) : null}
     </div>

@@ -18,6 +18,7 @@ import {
   RektrsCommentGateway,
   RektrsInboundComment,
 } from './rektrs.lead-providers';
+import { RektrsInboxService } from './rektrs.inbox.service';
 import { getSsrfSafeDispatcher } from '@gitroom/nestjs-libraries/dtos/webhooks/ssrf.safe.dispatcher';
 import { isSafePublicHttpsUrl } from '@gitroom/nestjs-libraries/dtos/webhooks/webhook.url.validator';
 
@@ -99,7 +100,12 @@ export class RektrsLeadsService {
     private _audit: RektrsAuditService,
     private _roles: RektrsRolesService,
     private _alerts: RektrsAlertsService,
-    private _gateway: RektrsCommentGateway
+    private _gateway: RektrsCommentGateway,
+    // REKTRS W6 — the inbox-triage hook. Optional so existing unit
+    // harnesses that construct this service directly keep working; the
+    // running app always wires it (DatabaseModule). Triage itself never
+    // throws, and a missing hook degrades to W1-only ingestion.
+    private _inbox?: RektrsInboxService
   ) {}
 
   // ── Rule settings (brand-level; MANAGER configures) ───────────────────────
@@ -532,6 +538,23 @@ export class RektrsLeadsService {
     if (!link || link.brand.organizationId !== orgId || link.brand.deletedAt) {
       return { outcome: 'no_rule' };
     }
+
+    // 2b) REKTRS W6 — inbox triage rides this same ingestion flow (no
+    //     second poller, no second webhook path): every claimed comment
+    //     on a brand channel is triaged for the brand when triage is
+    //     enabled, whether or not a W1 lead rule exists. The hook runs
+    //     BEFORE the W1 rule/paused checks so a paused brand and a
+    //     rule-less brand are triage's own decisions (it skips paused
+    //     brands itself). Triage never throws.
+    if (this._inbox) {
+      await this._inbox.triageInboundComment(
+        orgId,
+        link.brand,
+        integration,
+        input
+      );
+    }
+
     if (link.brand.pausedAt) {
       return { outcome: 'no_rule' };
     }
@@ -760,10 +783,15 @@ export class RektrsLeadsService {
       dmFailed: 0,
       duplicates: 0,
       errors: 0,
+      // REKTRS W6: brands whose comments were fetched ONLY for triage
+      // coverage (they have no lead rule) — see the second loop below.
+      inboxBrands: 0,
     };
+    const coveredBrandIds = new Set<string>();
     const rules = await this._repository.enabledLeadRules();
     for (const rule of rules) {
       tallies.rules++;
+      coveredBrandIds.add(rule.brandId);
       try {
         if (rule.brand.pausedAt || rule.brand.deletedAt) {
           continue;
@@ -791,32 +819,12 @@ export class RektrsLeadsService {
           if (!channel || !post.releaseId) {
             continue;
           }
-          let comments: RektrsInboundComment[];
-          try {
-            comments = await this._gateway.fetchPostComments(
-              channel.integration,
-              post.releaseId
-            );
-          } catch (e) {
-            tallies.errors++;
-            this._logger.warn(
-              `REKTRS W1 comment fetch failed (integration ${channel.integrationId}, post ${post.releaseId}): ${String(e)}`
-            );
-            continue;
-          }
-          for (const comment of comments) {
-            tallies.comments++;
-            const { outcome } = await this.processInboundComment(
-              rule.organizationId,
-              channel.integration,
-              comment
-            );
-            if (outcome === 'lead') tallies.leads++;
-            else if (outcome === 'guard') tallies.guards++;
-            else if (outcome === 'dm_failed') tallies.dmFailed++;
-            else if (outcome === 'duplicate' || outcome === 'seen') tallies.duplicates++;
-            else if (outcome === 'error') tallies.errors++;
-          }
+          await this.feedPostComments(
+            rule.organizationId,
+            channel.integration,
+            post.releaseId,
+            tallies
+          );
         }
       } catch (e) {
         tallies.errors++;
@@ -825,7 +833,105 @@ export class RektrsLeadsService {
         );
       }
     }
+
+    // REKTRS W6 — triage coverage: brands with inbox triage enabled but
+    // NO lead rule would otherwise never have their comments fetched by
+    // this poller (the webhook path reaches them, the poll path must
+    // too). Their comments are fed through the SAME engine entry point:
+    // the W1 side no-ops (no rule) and the W6 hook inside
+    // processInboundComment does the triage. One poller, one flow — the
+    // seen-claim makes any overlap with the rules loop a no-op.
+    if (this._inbox) {
+      const inboxSettings = await this._repository.enabledInboxSettings();
+      for (const settings of inboxSettings) {
+        if (coveredBrandIds.has(settings.brandId)) {
+          continue;
+        }
+        tallies.inboxBrands++;
+        try {
+          if (settings.brand.pausedAt || settings.brand.deletedAt) {
+            continue;
+          }
+          const channels = settings.brand.channels.filter(
+            (c) =>
+              c.integration &&
+              !c.integration.disabled &&
+              !c.integration.deletedAt &&
+              this._gateway.supports(c.integration)
+          );
+          if (!channels.length) {
+            continue;
+          }
+          const posts = await this._repository.publishedPostsForChannels(
+            settings.organizationId,
+            channels.map((c) => c.integrationId),
+            since
+          );
+          for (const post of posts) {
+            tallies.posts++;
+            const channel = channels.find(
+              (c) => c.integrationId === post.integrationId
+            );
+            if (!channel || !post.releaseId) {
+              continue;
+            }
+            await this.feedPostComments(
+              settings.organizationId,
+              channel.integration,
+              post.releaseId,
+              tallies
+            );
+          }
+        } catch (e) {
+          tallies.errors++;
+          this._logger.warn(
+            `REKTRS W6 triage sync failed for brand ${settings.brandId}: ${String(e)}`
+          );
+        }
+      }
+    }
     return tallies;
+  }
+
+  /** Fetch one post's comments and feed each through the engine (W1
+   *  lead matching + the W6 triage hook inside it). A fetch failure is
+   *  isolated to the post and counted, never fatal. */
+  private async feedPostComments(
+    orgId: string,
+    integration: Integration,
+    releaseId: string,
+    tallies: {
+      comments: number;
+      leads: number;
+      guards: number;
+      dmFailed: number;
+      duplicates: number;
+      errors: number;
+    }
+  ): Promise<void> {
+    let comments: RektrsInboundComment[];
+    try {
+      comments = await this._gateway.fetchPostComments(integration, releaseId);
+    } catch (e) {
+      tallies.errors++;
+      this._logger.warn(
+        `REKTRS W1 comment fetch failed (integration ${integration.id}, post ${releaseId}): ${String(e)}`
+      );
+      return;
+    }
+    for (const comment of comments) {
+      tallies.comments++;
+      const { outcome } = await this.processInboundComment(
+        orgId,
+        integration,
+        comment
+      );
+      if (outcome === 'lead') tallies.leads++;
+      else if (outcome === 'guard') tallies.guards++;
+      else if (outcome === 'dm_failed') tallies.dmFailed++;
+      else if (outcome === 'duplicate' || outcome === 'seen') tallies.duplicates++;
+      else if (outcome === 'error') tallies.errors++;
+    }
   }
 
   /** Bounded webhook retries: at most REKTRS_LEAD_WEBHOOK_MAX_ATTEMPTS

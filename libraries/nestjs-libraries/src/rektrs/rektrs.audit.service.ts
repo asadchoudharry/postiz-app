@@ -19,7 +19,9 @@ export interface RektrsAuditWrite {
     | 'EvergreenCopy'
     | 'MilestoneCtaSettings'
     | 'MilestoneCtaRun'
-    | 'MilestoneCtaAction';
+    | 'MilestoneCtaAction'
+    | 'InboxSettings'
+    | 'InboxItem';
   entityId: string;
   beforeHash?: string;
   afterHash?: string;

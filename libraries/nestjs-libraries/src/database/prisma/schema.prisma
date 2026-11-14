@@ -57,6 +57,8 @@ model Organization {
   rektrsMilestoneCtaSettings MilestoneCtaSettings[]
   rektrsMilestoneCtaRuns     MilestoneCtaRun[]
   rektrsMilestoneCtaActions  MilestoneCtaAction[]
+  rektrsInboxSettings InboxSettings[]
+  rektrsInboxItems    InboxItem[]
 
   @@index([apiKey])
   @@index([streakSince])
@@ -1929,6 +1931,8 @@ model Brand {
   milestoneCtaSettings MilestoneCtaSettings?
   milestoneCtaRuns     MilestoneCtaRun[]
   milestoneCtaActions  MilestoneCtaAction[]
+  inboxSettings InboxSettings?
+  inboxItems    InboxItem[]
 
   @@unique([organizationId, slug])
   @@index([organizationId])
@@ -2483,4 +2487,97 @@ model MilestoneCtaAction {
   @@index([postId])
   @@index([status])
   @@map("rektrs_milestone_cta_actions")
+}
+
+// ─── REKTRS W6 — Inbox Triage (Multilingual) (AUTOMATION-WORKFLOWS.md W6) ───
+// Inbound comments on a triage-enabled brand's channels (the W1 ingestion
+// stream: hourly poll + Meta webhook) are classified deterministically —
+// COMPLAINT (→ human queue + MANAGER alert) / FAQ topic (→ suggested-reply
+// draft from the brand's template) / GENERAL — translated into the brand's
+// working language when a translation provider is configured, and listed
+// in the inbox. NOTHING is auto-sent in v1: a human sends a draft with one
+// tap (POST …/inbox/:itemId/send). All tables additive, rektrs_* mapped.
+
+// One triage configuration per brand (the MilestoneCtaSettings pattern).
+// faq* are reply templates with {brandName} / {name} placeholders; a topic
+// with an empty template still classifies — the item simply lands without
+// a draft. extraComplaintKeywords are ADDED to the built-in complaint
+// lexicon (W1 guard words + anger terms); the defaults always apply.
+model InboxSettings {
+  id                     String   @id @default(uuid())
+  organizationId         String
+  brandId                String   @unique          // one configuration per brand
+  enabled                Boolean  @default(false)
+  workingLanguage        String   @default("en")   // en | ur | ar | ur-Latn
+  faqPrice               String   @default("")
+  faqTiming              String   @default("")
+  faqLocation            String   @default("")
+  faqDelivery            String   @default("")
+  extraComplaintKeywords String[] @default([])
+  createdById            String
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  version                Int      @default(1)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  brand        Brand        @relation(fields: [brandId], references: [id])
+
+  @@index([organizationId])
+  @@map("rektrs_inbox_settings")
+}
+
+// One row per triaged inbound comment. category: COMPLAINT | FAQ_PRICE |
+// FAQ_TIMING | FAQ_LOCATION | FAQ_DELIVERY | GENERAL. status: NEW
+// (listed) | QUEUED (complaint — a human owns it) | DRAFTED (FAQ with a
+// suggested reply) | SENT (a human sent the reply) | DISMISSED.
+// translationStatus: NOT_NEEDED (already the working language) |
+// TRANSLATED | UNAVAILABLE (no provider configured) | FAILED — and
+// translatedText is null unless TRANSLATED: a translation is never
+// invented. note carries the channel's reply-capability note (and a
+// translation-failure note) so the inbox screen can be honest about what
+// Send will do before a human presses it.
+model InboxItem {
+  id                 String    @id @default(uuid())
+  organizationId     String
+  brandId            String
+  integrationId      String                        // the brand channel the comment arrived on
+  providerIdentifier String                        // facebook | instagram (| instagram-standalone, reserved)
+  postId             String?                       // → Post.id when the provider post maps to a local post
+  providerPostId     String                        // provider media/post id (Post.releaseId)
+  providerCommentId  String                        // provider comment id
+  authorId           String                        // provider user id of the commenter
+  authorName         String?                       // handle/username as the provider exposes it
+  originalText       String
+  detectedLanguage   String                        // en | ur | ar | ur-Latn | other
+  translatedText     String?
+  translationStatus  String                        // NOT_NEEDED | TRANSLATED | UNAVAILABLE | FAILED
+  category           String                        // COMPLAINT | FAQ_PRICE | FAQ_TIMING | FAQ_LOCATION | FAQ_DELIVERY | GENERAL
+  matchedPhrase      String?                       // the lexicon phrase that fired (null on GENERAL)
+  status             String                        // NEW | QUEUED | DRAFTED | SENT | DISMISSED
+  suggestedReply     String?                       // the drafted FAQ reply (DRAFTED items)
+  sentText           String?                       // the exact text posted on send (a human may edit the draft)
+  replyCommentId     String?                       // provider id of the posted reply (success only)
+  sendError          String?                       // last send failure (provider error, verbatim-ish ≤500)
+  sentAt             DateTime?
+  sentById           String?
+  dismissedById      String?
+  dismissedAt        DateTime?
+  note               String?                       // reply-capability / translation notes for the human
+  commentAt          DateTime?                     // provider timestamp of the comment
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  version            Int       @default(1)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  brand        Brand        @relation(fields: [brandId], references: [id])
+
+  // One triage row per provider comment per brand — the poller and the
+  // webhook receiver race safely on this (and on the W1 seen-claim that
+  // precedes triage in the shared ingestion flow).
+  @@unique([brandId, providerCommentId])
+  @@index([organizationId])
+  @@index([brandId])
+  @@index([status])
+  @@index([category])
+  @@map("rektrs_inbox_items")
 }
