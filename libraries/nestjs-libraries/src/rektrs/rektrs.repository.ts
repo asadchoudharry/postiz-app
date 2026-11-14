@@ -682,6 +682,44 @@ export class RektrsRepository {
     });
   }
 
+  // ── W7 blog → social chain ────────────────────────────────────────────────
+  blogSettingsByBrand(orgId: string, brandId: string, tx?: RektrsDb) {
+    return this.db(tx).blogSettings.findFirst({
+      where: { brandId, organizationId: orgId },
+    });
+  }
+
+  /**
+   * Webhook brand resolution (W7 receiver): the URL key is a brand id or
+   * a brand slug, and there is NO session org — the per-brand HMAC secret
+   * is the authentication. Ids are globally unique; slugs are unique per
+   * org only, so a slug can match several brands (the receiver then tries
+   * each candidate's secret — only the right org's can verify). Cross-org
+   * BY DESIGN at this one boundary, mirroring integrationsByInternalId
+   * for the W1 Meta receiver.
+   */
+  brandsByWebhookKey(key: string, tx?: RektrsDb) {
+    return this.db(tx).brand.findMany({
+      where: { deletedAt: null, OR: [{ id: key }, { slug: key }] },
+      include: { channels: true },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  blogRunByWpPost(brandId: string, wpPostId: string, tx?: RektrsDb) {
+    return this.db(tx).blogChainRun.findFirst({
+      where: { brandId, wpPostId },
+    });
+  }
+
+  blogRunsOfBrand(orgId: string, brandId: string, take = 20, tx?: RektrsDb) {
+    return this.db(tx).blogChainRun.findMany({
+      where: { organizationId: orgId, brandId },
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+  }
+
   // ── W2 reminder sweep reads ───────────────────────────────────────────────
   /**
    * IN_REVIEW submissions whose current round entered review at or before

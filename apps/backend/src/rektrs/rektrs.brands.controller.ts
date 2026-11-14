@@ -21,12 +21,14 @@ import { RektrsLeadsService } from '@gitroom/nestjs-libraries/rektrs/rektrs.lead
 import { RektrsEvergreenService } from '@gitroom/nestjs-libraries/rektrs/rektrs.evergreen.service';
 import { RektrsMilestoneCtaService } from '@gitroom/nestjs-libraries/rektrs/rektrs.milestone-cta.service';
 import { RektrsInboxService } from '@gitroom/nestjs-libraries/rektrs/rektrs.inbox.service';
+import { RektrsBlogChainService } from '@gitroom/nestjs-libraries/rektrs/rektrs.blog-chain.service';
 import {
   AssignChannelDto,
   CreateBrandDto,
   ListInboxItemsQueryDto,
   PauseBrandDto,
   SendInboxReplyDto,
+  UpdateBlogChainSettingsDto,
   UpdateBrandDto,
   UpdateEvergreenSettingsDto,
   UpdateInboxSettingsDto,
@@ -54,7 +56,8 @@ export class RektrsBrandsController {
     private _leads: RektrsLeadsService,
     private _evergreen: RektrsEvergreenService,
     private _milestoneCta: RektrsMilestoneCtaService,
-    private _inbox: RektrsInboxService
+    private _inbox: RektrsInboxService,
+    private _blogChain: RektrsBlogChainService
   ) {}
 
   @Post('/')
@@ -337,6 +340,59 @@ export class RektrsBrandsController {
     @RealIP() ip: string
   ) {
     return this._inbox.dismissItem(org.id, sessionActor(user, ip), id, itemId);
+  }
+
+  // ── W7 blog → social chain: per-brand configuration, secret, runs ───────
+  @Get('/:id/blog-chain')
+  async getBlogChainSettings(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string
+  ) {
+    return this._blogChain.getBlogChainSettings(org.id, id);
+  }
+
+  @Put('/:id/blog-chain')
+  @RequireRektrsFunctions('MANAGER')
+  async updateBlogChainSettings(
+    @GetOrgFromRequest() org: Organization,
+    @GetUserFromRequest() user: User,
+    @Param('id') id: string,
+    @Body() body: UpdateBlogChainSettingsDto,
+    @Headers('if-match') ifMatch: string,
+    @RealIP() ip: string
+  ) {
+    return this._blogChain.updateBlogChainSettings(
+      org.id,
+      sessionActor(user, ip),
+      id,
+      body,
+      parseIfMatch(ifMatch)
+    );
+  }
+
+  @Post('/:id/blog-chain/rotate-secret')
+  @RequireRektrsFunctions('MANAGER')
+  async rotateBlogChainSecret(
+    @GetOrgFromRequest() org: Organization,
+    @GetUserFromRequest() user: User,
+    @Param('id') id: string,
+    @RealIP() ip: string
+  ) {
+    // The one response in which the webhook secret ever leaves the server.
+    return this._blogChain.rotateBlogChainSecret(
+      org.id,
+      sessionActor(user, ip),
+      id
+    );
+  }
+
+  @Get('/:id/blog-chain/runs')
+  @RequireRektrsFunctions('MANAGER', 'CREATOR', 'ANALYST')
+  async listBlogChainRuns(
+    @GetOrgFromRequest() org: Organization,
+    @Param('id') id: string
+  ) {
+    return this._blogChain.listBlogChainRuns(org.id, id);
   }
 
   @Delete('/:id/channels/:integrationId')

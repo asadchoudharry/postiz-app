@@ -53,6 +53,8 @@ import { RektrsCtaCommentGateway } from '@gitroom/nestjs-libraries/rektrs/rektrs
 import { RektrsInboxService } from '@gitroom/nestjs-libraries/rektrs/rektrs.inbox.service';
 import { RektrsTranslationService } from '@gitroom/nestjs-libraries/rektrs/rektrs.inbox-translation';
 import { RektrsInboxReplyGateway } from '@gitroom/nestjs-libraries/rektrs/rektrs.inbox-providers';
+import { RektrsBlogChainService } from '@gitroom/nestjs-libraries/rektrs/rektrs.blog-chain.service';
+import { RektrsBlogGenerationService } from '@gitroom/nestjs-libraries/rektrs/rektrs.blog-generation';
 import { SetsRepository } from '@gitroom/nestjs-libraries/database/prisma/sets/sets.repository';
 import { ThirdPartyRepository } from '@gitroom/nestjs-libraries/database/prisma/third-party/third-party.repository';
 import { ThirdPartyService } from '@gitroom/nestjs-libraries/database/prisma/third-party/third-party.service';
@@ -132,6 +134,8 @@ import { AdminStatsService } from '@gitroom/nestjs-libraries/database/prisma/adm
     RektrsInboxService,
     RektrsTranslationService,
     RektrsInboxReplyGateway,
+    RektrsBlogChainService,
+    RektrsBlogGenerationService,
     ThirdPartyRepository,
     ThirdPartyService,
     OAuthRepository,

@@ -501,3 +501,51 @@ export class PauseBrandDto {
   @IsString()
   reason?: string;
 }
+
+/**
+ * W7 — the per-brand blog → social chain configuration
+ * (AUTOMATION-WORKFLOWS.md W7). Deliberately NO webhookSecret field: the
+ * secret is set only by the rotate action (which returns the new value
+ * once) and is never accepted or echoed through settings writes — the
+ * W1 write-only secret posture. The voice fields are W7's minimal voice
+ * block (P4 brand memory supersedes them later).
+ */
+export class UpdateBlogChainSettingsDto {
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  aiEnabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  voiceTone?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  voiceNotes?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  examplePost?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  utmSource?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  utmMedium?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  firstCommentTemplate?: string;
+}

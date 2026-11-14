@@ -21,7 +21,9 @@ export interface RektrsAuditWrite {
     | 'MilestoneCtaRun'
     | 'MilestoneCtaAction'
     | 'InboxSettings'
-    | 'InboxItem';
+    | 'InboxItem'
+    | 'BlogSettings'
+    | 'BlogChainRun';
   entityId: string;
   beforeHash?: string;
   afterHash?: string;

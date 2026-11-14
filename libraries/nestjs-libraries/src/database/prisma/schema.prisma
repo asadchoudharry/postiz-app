@@ -59,6 +59,8 @@ model Organization {
   rektrsMilestoneCtaActions  MilestoneCtaAction[]
   rektrsInboxSettings InboxSettings[]
   rektrsInboxItems    InboxItem[]
+  rektrsBlogSettings  BlogSettings[]
+  rektrsBlogChainRuns BlogChainRun[]
 
   @@index([apiKey])
   @@index([streakSince])
@@ -1933,6 +1935,8 @@ model Brand {
   milestoneCtaActions  MilestoneCtaAction[]
   inboxSettings InboxSettings?
   inboxItems    InboxItem[]
+  blogSettings  BlogSettings?
+  blogChainRuns BlogChainRun[]
 
   @@unique([organizationId, slug])
   @@index([organizationId])
@@ -2580,4 +2584,83 @@ model InboxItem {
   @@index([status])
   @@index([category])
   @@map("rektrs_inbox_items")
+}
+
+// ─── REKTRS W7 — Blog → Social Chain (AUTOMATION-WORKFLOWS.md W7) ───────────
+// One configuration per brand. webhookSecret is the per-brand WordPress
+// webhook signing secret: stored server-side only (the W1 crmWebhookSecret
+// convention — the database is the trust boundary), write-only through the
+// API: reads expose only `secretSet`, and the value leaves the server
+// exactly once, in the rotate response. The voice block (voiceTone /
+// voiceNotes / examplePost) is W7's MINIMAL brand-voice profile — P4's
+// brand memory will supersede it; it is labelled as such in the UI.
+model BlogSettings {
+  id                  String   @id @default(uuid())
+  organizationId      String
+  brandId             String   @unique          // one configuration per brand
+  enabled             Boolean  @default(false)
+  webhookSecret       String?
+  aiEnabled           Boolean  @default(true)
+  voiceTone           String   @default("")
+  voiceNotes          String   @default("")
+  examplePost         String   @default("")
+  utmSource           String   @default("")      // empty → the brand slug at run time
+  utmMedium           String   @default("social")
+  firstCommentTemplate String  @default("Read the full post: {link}")  // {link} = UTM link, {title} = post title
+  createdById         String
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  version             Int      @default(1)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  brand        Brand        @relation(fields: [brandId], references: [id])
+
+  @@index([organizationId])
+  @@map("rektrs_blog_settings")
+}
+
+// One row per accepted WordPress delivery. status: RECEIVED (transient —
+// the receiver processes synchronously, so a resting RECEIVED row means
+// the process died mid-chain) | DRAFTED (every variant with a channel got
+// its drafts) | PARTIAL (some variant SKIPPED_NO_CHANNEL / failed) |
+// FAILED (nothing could be drafted; error says why) |
+// SKIPPED_BRAND_PAUSED (W5 kill-switch: recorded, nothing created, the
+// receiver still answered 200 so WordPress does not retry-storm).
+// aiMode: AI (drafts came from the configured AI provider) | AI_FALLBACK
+// (deterministic template drafts — AI disabled, unconfigured or failed;
+// aiError carries the provider failure when there was one, ≤500 chars).
+// variants is the per-platform outcome record:
+//   { linkedin: {outcome, postIds, integrationIds}, x: {...}, instagram: {...} }
+// with outcome DRAFTED | SKIPPED_NO_CHANNEL | FAILED. firstComment is the
+// intended first comment (template rendered with the UTM link) — Post has
+// NO first-comment field anywhere in this codebase, so it lives on the
+// run only and a human pastes it after publishing (see W7 notes).
+model BlogChainRun {
+  id            String    @id @default(uuid())
+  organizationId String
+  brandId       String
+  wpPostId      String                        // WordPress post id, as delivered (string form)
+  wpLink        String
+  title         String
+  status        String    @default("RECEIVED")  // RECEIVED | DRAFTED | PARTIAL | FAILED | SKIPPED_BRAND_PAUSED
+  aiMode        String?                       // AI | AI_FALLBACK (null until drafting ran)
+  aiError       String?
+  firstComment  String?
+  variants      Json?
+  draftedCount  Int       @default(0)
+  error         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  version       Int       @default(1)
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  brand        Brand        @relation(fields: [brandId], references: [id])
+
+  // One chain run per WordPress post per brand — re-deliveries dedupe on
+  // this (the receiver answers 200 {duplicate:true} and creates nothing).
+  @@unique([brandId, wpPostId])
+  @@index([organizationId])
+  @@index([brandId])
+  @@index([status])
+  @@map("rektrs_blog_chain_runs")
 }

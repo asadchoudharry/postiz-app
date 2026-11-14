@@ -13,6 +13,7 @@ import {
 import { RektrsLeadsController } from '@gitroom/backend/rektrs/rektrs.leads.controller';
 import { RektrsInboxController } from '@gitroom/backend/rektrs/rektrs.inbox.controller';
 import { RektrsMetaWebhookController } from '@gitroom/backend/rektrs/rektrs.meta.webhook.controller';
+import { RektrsWordpressWebhookController } from '@gitroom/backend/rektrs/rektrs.wordpress.webhook.controller';
 import { RektrsFunctionsGuard } from '@gitroom/backend/rektrs/rektrs.functions.guard';
 
 const rektrsControllers = [
@@ -35,10 +36,15 @@ const rektrsControllers = [
  */
 @Module({
   imports: [],
-  // The Meta webhook receiver is registered as a controller but kept OUT
-  // of rektrsControllers on purpose: AuthMiddleware applies only to that
-  // list, and Meta authenticates by HMAC signature, not by session.
-  controllers: [...rektrsControllers, RektrsMetaWebhookController],
+  // The webhook receivers are registered as controllers but kept OUT of
+  // rektrsControllers on purpose: AuthMiddleware applies only to that
+  // list, and Meta / WordPress authenticate by HMAC signature, not by
+  // session (Meta: app secret env; WordPress: per-brand secret).
+  controllers: [
+    ...rektrsControllers,
+    RektrsMetaWebhookController,
+    RektrsWordpressWebhookController,
+  ],
   providers: [AuthMiddleware, RektrsFunctionsGuard],
 })
 export class RektrsModule implements NestModule {

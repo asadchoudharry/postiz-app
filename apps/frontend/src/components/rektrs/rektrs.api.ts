@@ -397,6 +397,70 @@ export interface RektrsMilestoneCtaRunResult {
   }[];
 }
 
+/** W7: the per-brand blog → social chain configuration. The webhook
+ *  secret itself is never in this view — only whether one is set. */
+export interface RektrsBlogChainSettings {
+  brandId: string;
+  enabled: boolean;
+  secretSet: boolean;
+  aiEnabled: boolean;
+  voiceTone: string;
+  voiceNotes: string;
+  examplePost: string;
+  utmSource: string;
+  utmMedium: string;
+  firstCommentTemplate: string;
+  version: number | null;
+}
+
+/** W7: the rotate response — the ONLY time the secret is ever shown. */
+export interface RektrsBlogChainRotateResult {
+  brandId: string;
+  secret: string;
+  secretSet: true;
+}
+
+export type RektrsBlogChainRunStatus =
+  | 'RECEIVED'
+  | 'DRAFTED'
+  | 'PARTIAL'
+  | 'FAILED'
+  | 'SKIPPED_BRAND_PAUSED';
+
+export interface RektrsBlogVariantOutcome {
+  outcome: 'DRAFTED' | 'SKIPPED_NO_CHANNEL' | 'FAILED';
+  integrationIds: string[];
+  postIds: string[];
+  error?: string;
+}
+
+/** W7: one WordPress delivery and what the chain did with it. */
+export interface RektrsBlogChainRun {
+  id: string;
+  organizationId: string;
+  brandId: string;
+  wpPostId: string;
+  wpLink: string;
+  title: string;
+  status: RektrsBlogChainRunStatus;
+  aiMode: 'AI' | 'AI_FALLBACK' | null;
+  aiError: string | null;
+  firstComment: string | null;
+  variants: {
+    LINKEDIN: RektrsBlogVariantOutcome;
+    X: RektrsBlogVariantOutcome;
+    INSTAGRAM: RektrsBlogVariantOutcome;
+  } | null;
+  draftedCount: number;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RektrsBlogChainRuns {
+  runs: RektrsBlogChainRun[];
+}
+
 /** W6: the per-brand inbox triage configuration. */
 export interface RektrsInboxSettings {
   brandId: string;
@@ -555,6 +619,10 @@ const READABLE_BY_CODE: Record<string, string> = {
     'Enable the evergreen recycler for this brand before running it.',
   MILESTONE_CTA_NOT_ENABLED:
     'Enable the milestone auto-CTA for this brand before running it.',
+  VERSION_CONFLICT:
+    'These settings changed since they were loaded. Reload the brand and try again.',
+  BLOG_CHAIN_DISABLED:
+    'The blog chain is not enabled for this brand.',
   CTA_CONTENT_REQUIRED:
     'Write the CTA text or add a CTA link before enabling the milestone auto-CTA.',
   CTA_URL_INVALID: 'The CTA link must be a valid http(s) URL.',

@@ -13,6 +13,10 @@ import { useT } from '@gitroom/react/translation/get.transation.service.client';
 import {
   formatDateTime,
   readableRektrsError,
+  RektrsBlogChainRotateResult,
+  RektrsBlogChainRun,
+  RektrsBlogChainRuns,
+  RektrsBlogChainSettings,
   RektrsBrand,
   RektrsBrandPauseResult,
   RektrsBrandResumeResult,
@@ -1487,6 +1491,541 @@ const BrandInboxTriage: FC<{ brand: RektrsBrand }> = ({ brand }) => {
   );
 };
 
+/**
+ * W7 — the brand's Blog → Social Chain settings + run history
+ * (AUTOMATION-WORKFLOWS.md W7). Lives inside the brand edit modal under
+ * Inbox triage. When this brand's WordPress site publishes a post, the
+ * webhook below turns it into DRAFT posts for the brand's LinkedIn / X /
+ * Instagram channels — a person reviews, schedules and publishes them
+ * through the normal flow. The webhook secret is write-only: it is shown
+ * exactly once, in the rotate response, and this screen keeps it in
+ * local state only until the modal closes.
+ */
+const BrandBlogChain: FC<{ brand: RektrsBrand }> = ({ brand }) => {
+  const t = useT();
+  const call = useRektrsCall();
+  const load = useRektrsLoader();
+  const toaster = useToaster();
+  const canManage = useHasRektrsFunction('MANAGER');
+  const canCreator = useHasRektrsFunction('CREATOR');
+  const canAnalyst = useHasRektrsFunction('ANALYST');
+  const canViewRuns = canManage || canCreator || canAnalyst;
+  const { data: settings, mutate } = useSWR<RektrsBlogChainSettings>(
+    `/rektrs/v1/brands/${brand.id}/blog-chain`,
+    load,
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      refreshWhenHidden: false,
+      refreshWhenOffline: false,
+    }
+  );
+  const { data: runsData } = useSWR<RektrsBlogChainRuns>(
+    canViewRuns ? `/rektrs/v1/brands/${brand.id}/blog-chain/runs` : null,
+    load,
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      refreshWhenHidden: false,
+      refreshWhenOffline: false,
+    }
+  );
+  const [enabled, setEnabled] = useState(false);
+  const [aiEnabled, setAiEnabled] = useState(true);
+  const [voiceTone, setVoiceTone] = useState('');
+  const [voiceNotes, setVoiceNotes] = useState('');
+  const [examplePost, setExamplePost] = useState('');
+  const [utmSource, setUtmSource] = useState('');
+  const [utmMedium, setUtmMedium] = useState('social');
+  const [firstCommentTemplate, setFirstCommentTemplate] = useState(
+    'Read the full post: {link}'
+  );
+  const [saving, setSaving] = useState(false);
+  const [rotating, setRotating] = useState(false);
+  const [error, setError] = useState('');
+  const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
+  const [origin, setOrigin] = useState('');
+
+  useEffect(() => {
+    setOrigin(window.location.origin);
+  }, []);
+
+  useEffect(() => {
+    if (settings) {
+      setEnabled(settings.enabled);
+      setAiEnabled(settings.aiEnabled);
+      setVoiceTone(settings.voiceTone);
+      setVoiceNotes(settings.voiceNotes);
+      setExamplePost(settings.examplePost);
+      setUtmSource(settings.utmSource);
+      setUtmMedium(settings.utmMedium);
+      setFirstCommentTemplate(settings.firstCommentTemplate);
+    }
+  }, [settings]);
+
+  const webhookUrl = origin
+    ? `${origin}/api/rektrs/webhooks/wordpress/${brand.id}`
+    : '';
+
+  const copyText = useCallback(
+    async (value: string, doneMessage: string) => {
+      try {
+        await navigator.clipboard.writeText(value);
+        toaster.show(doneMessage, 'success');
+      } catch {
+        toaster.show(
+          t('rektrs_blog_chain_copy_failed', 'Copy failed — select the text and copy it manually'),
+          'warning'
+        );
+      }
+    },
+    [t, toaster]
+  );
+
+  const save = useCallback(async () => {
+    setSaving(true);
+    setError('');
+    try {
+      await call(`/rektrs/v1/brands/${brand.id}/blog-chain`, {
+        method: 'PUT',
+        ifMatch: settings?.version ?? undefined,
+        body: {
+          enabled,
+          aiEnabled,
+          voiceTone: voiceTone.trim(),
+          voiceNotes: voiceNotes.trim(),
+          examplePost: examplePost.trim(),
+          utmSource: utmSource.trim(),
+          utmMedium: utmMedium.trim() || 'social',
+          firstCommentTemplate: firstCommentTemplate.trim(),
+        },
+      });
+      await mutate();
+      toaster.show(
+        t('rektrs_blog_chain_saved', 'Blog chain saved'),
+        'success'
+      );
+    } catch (e) {
+      setError(
+        readableRektrsError(
+          e,
+          t('rektrs_blog_chain_save_failed', 'Could not save the blog chain settings')
+        )
+      );
+    } finally {
+      setSaving(false);
+    }
+  }, [aiEnabled, brand.id, call, enabled, examplePost, firstCommentTemplate, mutate, settings?.version, t, toaster, utmMedium, utmSource, voiceNotes, voiceTone]);
+
+  const rotate = useCallback(async () => {
+    setRotating(true);
+    setError('');
+    try {
+      const result = await call<RektrsBlogChainRotateResult>(
+        `/rektrs/v1/brands/${brand.id}/blog-chain/rotate-secret`,
+        { method: 'POST' }
+      );
+      setRevealedSecret(result.secret);
+      await mutate();
+      toaster.show(
+        t(
+          'rektrs_blog_chain_secret_rotated',
+          'New webhook secret generated — copy it into WordPress now; it is shown only once'
+        ),
+        'success'
+      );
+    } catch (e) {
+      setError(
+        readableRektrsError(
+          e,
+          t('rektrs_blog_chain_rotate_failed', 'Could not generate a new webhook secret')
+        )
+      );
+    } finally {
+      setRotating(false);
+    }
+  }, [brand.id, call, mutate, t, toaster]);
+
+  if (!settings) {
+    return null;
+  }
+
+  const fieldLabel = 'text-[14px] font-[500]';
+  const fieldHint = 'text-[12px] opacity-60';
+  const inputCls =
+    'bg-newBgColorInner border border-newTableBorder rounded-[8px] px-[16px] py-[10px] text-[14px] outline-none w-full disabled:opacity-50';
+
+  const toggle = (
+    value: boolean,
+    setValue: (v: boolean) => void,
+    label: string
+  ) => (
+    <button
+      type="button"
+      disabled={!canManage}
+      onClick={() => setValue(!value)}
+      className={clsx(
+        'relative w-[42px] h-[24px] rounded-full shrink-0 transition-colors',
+        value ? 'bg-[#612bd3]' : 'bg-gray-400/40',
+        !canManage && 'opacity-50 cursor-not-allowed'
+      )}
+      aria-pressed={value}
+      aria-label={label}
+    >
+      <span
+        className={clsx(
+          'absolute top-[3px] w-[18px] h-[18px] rounded-full bg-white transition-all',
+          value ? 'start-[21px]' : 'start-[3px]'
+        )}
+      />
+    </button>
+  );
+
+  const runStatusBadge = (run: RektrsBlogChainRun) =>
+    run.status === 'DRAFTED'
+      ? 'bg-emerald-500/15 text-emerald-500'
+      : run.status === 'PARTIAL'
+        ? 'bg-amber-500/15 text-amber-500'
+        : run.status === 'SKIPPED_BRAND_PAUSED'
+          ? 'bg-gray-400/20 text-gray-300'
+          : 'bg-red-500/15 text-red-400';
+  const runStatusLabel = (run: RektrsBlogChainRun) =>
+    run.status === 'DRAFTED'
+      ? t('rektrs_blog_chain_status_drafted', 'Drafts created')
+      : run.status === 'PARTIAL'
+        ? t('rektrs_blog_chain_status_partial', 'Partially drafted')
+        : run.status === 'SKIPPED_BRAND_PAUSED'
+          ? t('rektrs_blog_chain_status_paused', 'Skipped — brand paused')
+          : run.status === 'RECEIVED'
+            ? t('rektrs_blog_chain_status_received', 'Received')
+            : t('rektrs_blog_chain_status_failed', 'Failed');
+
+  const runs = runsData?.runs || [];
+
+  return (
+    <div className="flex flex-col gap-[10px]">
+      <div className="flex items-start justify-between gap-[16px]">
+        <div className="flex flex-col gap-[2px]">
+          <div className="text-[14px] font-[600]">
+            {t('rektrs_blog_chain', 'Blog → social chain')}
+          </div>
+          <div className="text-[12px] opacity-60 max-w-[520px]">
+            {t(
+              'rektrs_blog_chain_hint',
+              'When this brand’s WordPress site publishes a post, the webhook below drafts a LinkedIn post, an X thread and an Instagram caption in the brand’s voice and saves them as DRAFTS on the brand’s channels — nothing is ever auto-published; a person reviews and schedules each draft, and the brand’s approval policy applies as usual.'
+            )}
+          </div>
+        </div>
+        {toggle(enabled, setEnabled, t('rektrs_blog_chain', 'Blog → social chain'))}
+      </div>
+
+      <div className="flex flex-col gap-[6px]">
+        <div className={fieldLabel}>
+          {t('rektrs_blog_chain_webhook_url', 'WordPress webhook URL')}
+        </div>
+        <div className="flex gap-[8px]">
+          <input
+            className={inputCls}
+            readOnly
+            value={webhookUrl}
+            onFocus={(e) => e.target.select()}
+          />
+          <Button
+            type="button"
+            secondary
+            onClick={() =>
+              copyText(
+                webhookUrl,
+                t('rektrs_blog_chain_url_copied', 'Webhook URL copied')
+              )
+            }
+          >
+            {t('rektrs_blog_chain_copy', 'Copy')}
+          </Button>
+        </div>
+        <div className={fieldHint}>
+          {t(
+            'rektrs_blog_chain_webhook_hint',
+            'In WordPress, send a webhook for “post published” to this URL with the header X-Rektrs-Signature: sha256=<HMAC-SHA256 of the raw body, using the secret below> (or X-Rektrs-Secret with the secret itself). Deliveries for other post statuses are ignored, and re-sending the same post never duplicates drafts.'
+          )}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-[6px]">
+        <div className={fieldLabel}>
+          {t('rektrs_blog_chain_secret', 'Webhook secret')}
+        </div>
+        {revealedSecret ? (
+          <div className="flex flex-col gap-[6px]">
+            <div className="flex gap-[8px]">
+              <input
+                className={inputCls}
+                readOnly
+                value={revealedSecret}
+                onFocus={(e) => e.target.select()}
+              />
+              <Button
+                type="button"
+                secondary
+                onClick={() =>
+                  copyText(
+                    revealedSecret,
+                    t('rektrs_blog_chain_secret_copied', 'Webhook secret copied')
+                  )
+                }
+              >
+                {t('rektrs_blog_chain_copy', 'Copy')}
+              </Button>
+            </div>
+            <div className="text-[12px] text-amber-500">
+              {t(
+                'rektrs_blog_chain_secret_once',
+                'This secret is shown ONCE — paste it into WordPress now. It is never displayed again; generating a new one invalidates the old one immediately.'
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-[10px]">
+            <span className="text-[13px] opacity-70">
+              {settings.secretSet
+                ? t('rektrs_blog_chain_secret_set', 'A secret is set (hidden).')
+                : t(
+                    'rektrs_blog_chain_secret_unset',
+                    'No secret yet — the webhook refuses deliveries until one is generated.'
+                  )}
+            </span>
+            {canManage ? (
+              <Button
+                type="button"
+                secondary
+                loading={rotating}
+                onClick={rotate}
+              >
+                {settings.secretSet
+                  ? t('rektrs_blog_chain_secret_rotate', 'Regenerate secret')
+                  : t('rektrs_blog_chain_secret_generate', 'Generate secret')}
+              </Button>
+            ) : null}
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-start justify-between gap-[16px]">
+        <div className="flex flex-col gap-[2px]">
+          <div className={fieldLabel}>
+            {t('rektrs_blog_chain_ai', 'AI drafting')}
+          </div>
+          <div className={fieldHint}>
+            {t(
+              'rektrs_blog_chain_ai_hint',
+              'When on and the deployment has an AI provider configured, drafts are written by AI in the brand voice below. Otherwise the chain writes plain template drafts from the post’s title and excerpt and the run history marks them “Template”.'
+            )}
+          </div>
+        </div>
+        {toggle(aiEnabled, setAiEnabled, t('rektrs_blog_chain_ai', 'AI drafting'))}
+      </div>
+
+      <div className="flex flex-col gap-[6px]">
+        <div className={fieldLabel}>
+          {t('rektrs_blog_chain_voice', 'Brand voice (basic)')}
+        </div>
+        <input
+          className={inputCls}
+          disabled={!canManage}
+          value={voiceTone}
+          onChange={(e) => setVoiceTone(e.target.value)}
+          placeholder={t(
+            'rektrs_blog_chain_voice_tone_placeholder',
+            'Tone — e.g. Warm, expert, plain-spoken'
+          )}
+          maxLength={200}
+        />
+        <textarea
+          className={inputCls}
+          rows={2}
+          disabled={!canManage}
+          value={voiceNotes}
+          onChange={(e) => setVoiceNotes(e.target.value)}
+          placeholder={t(
+            'rektrs_blog_chain_voice_notes_placeholder',
+            'Voice notes — words to use or avoid, audience, style rules'
+          )}
+          maxLength={2000}
+        />
+        <textarea
+          className={inputCls}
+          rows={2}
+          disabled={!canManage}
+          value={examplePost}
+          onChange={(e) => setExamplePost(e.target.value)}
+          placeholder={t(
+            'rektrs_blog_chain_voice_example_placeholder',
+            'An example post in this brand’s voice'
+          )}
+          maxLength={2000}
+        />
+        <div className={fieldHint}>
+          {t(
+            'rektrs_blog_chain_voice_hint',
+            'This is the basic voice block for the blog chain — the full brand memory arrives with the AI Studio and will take over from here.'
+          )}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-[12px]">
+        <div className="flex flex-col gap-[6px] flex-1 min-w-[180px]">
+          <div className={fieldLabel}>
+            {t('rektrs_blog_chain_utm_source', 'UTM source')}
+          </div>
+          <input
+            className={inputCls}
+            disabled={!canManage}
+            value={utmSource}
+            onChange={(e) => setUtmSource(e.target.value)}
+            placeholder={brand.slug}
+            maxLength={100}
+          />
+          <div className={fieldHint}>
+            {t(
+              'rektrs_blog_chain_utm_source_hint',
+              'Blank = the brand slug.'
+            )}
+          </div>
+        </div>
+        <div className="flex flex-col gap-[6px] flex-1 min-w-[180px]">
+          <div className={fieldLabel}>
+            {t('rektrs_blog_chain_utm_medium', 'UTM medium')}
+          </div>
+          <input
+            className={inputCls}
+            disabled={!canManage}
+            value={utmMedium}
+            onChange={(e) => setUtmMedium(e.target.value)}
+            placeholder="social"
+            maxLength={100}
+          />
+          <div className={fieldHint}>
+            {t(
+              'rektrs_blog_chain_utm_hint',
+              'The campaign is the blog post’s own slug. Links that already carry UTM tags keep theirs.'
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-[6px]">
+        <div className={fieldLabel}>
+          {t('rektrs_blog_chain_first_comment', 'First comment')}
+        </div>
+        <textarea
+          className={inputCls}
+          rows={2}
+          disabled={!canManage}
+          value={firstCommentTemplate}
+          onChange={(e) => setFirstCommentTemplate(e.target.value)}
+          maxLength={1000}
+        />
+        <div className={fieldHint}>
+          {t(
+            'rektrs_blog_chain_first_comment_hint',
+            'Use {link} for the tagged blog link and {title} for the post title. Postiz drafts have no automatic first-comment slot, so the rendered comment is saved on each run below — paste it after publishing.'
+          )}
+        </div>
+      </div>
+
+      {error ? <div className="text-red-400 text-[13px]">{error}</div> : null}
+      {canManage ? (
+        <div className="flex justify-end gap-[10px]">
+          <Button type="button" secondary loading={saving} onClick={save}>
+            {t('rektrs_blog_chain_save', 'Save blog chain')}
+          </Button>
+        </div>
+      ) : null}
+
+      {canViewRuns && runs.length ? (
+        <div className="flex flex-col gap-[6px]">
+          <div className={fieldLabel}>
+            {t('rektrs_blog_chain_runs', 'Chain runs')}
+          </div>
+          <div className="flex flex-col divide-y divide-newTableBorder border border-newTableBorder rounded-[8px]">
+            {runs.slice(0, 10).map((run) => (
+              <div
+                key={run.id}
+                className="flex flex-wrap items-center gap-x-[10px] gap-y-[2px] px-[12px] py-[8px] text-[12px]"
+              >
+                <span
+                  className={clsx(
+                    'inline-flex rounded-full px-[8px] py-[2px] text-[11px] font-[600]',
+                    runStatusBadge(run)
+                  )}
+                >
+                  {runStatusLabel(run)}
+                </span>
+                <span
+                  className={clsx(
+                    'inline-flex rounded-full px-[8px] py-[2px] text-[11px] font-[600]',
+                    run.aiMode === 'AI'
+                      ? 'bg-[#612bd3]/15 text-[#8b5cf6]'
+                      : 'bg-gray-400/15 text-gray-300'
+                  )}
+                >
+                  {run.aiMode === 'AI'
+                    ? t('rektrs_blog_chain_ai_badge', 'AI')
+                    : t('rektrs_blog_chain_template_badge', 'Template')}
+                </span>
+                <a
+                  className="underline opacity-80 truncate max-w-[260px]"
+                  href={run.wpLink}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {run.title}
+                </a>
+                <span className="opacity-70">
+                  {run.variants
+                    ? (
+                        [
+                          ['LinkedIn', run.variants.LINKEDIN],
+                          ['X', run.variants.X],
+                          ['Instagram', run.variants.INSTAGRAM],
+                        ] as const
+                      )
+                        .map(
+                          ([name, v]) =>
+                            `${name}: ${
+                              v.outcome === 'DRAFTED'
+                                ? t('rektrs_blog_chain_outcome_drafted', 'drafted')
+                                : v.outcome === 'SKIPPED_NO_CHANNEL'
+                                  ? t('rektrs_blog_chain_outcome_no_channel', 'no channel')
+                                  : t('rektrs_blog_chain_outcome_failed', 'failed')
+                            }`
+                        )
+                        .join(' · ')
+                    : ''}
+                </span>
+                <span className="ms-auto opacity-50">
+                  {formatDateTime(run.createdAt)}
+                </span>
+                {run.aiError || run.error ? (
+                  <div className="w-full text-red-400/80">
+                    {run.aiError || run.error}
+                  </div>
+                ) : null}
+                {run.firstComment ? (
+                  <div className="w-full opacity-60 truncate">
+                    {t('rektrs_blog_chain_first_comment_label', 'First comment')}: “
+                    {run.firstComment}”
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
 const BrandFormModal: FC<{
   brand: RektrsBrand | null;
   onSaved: () => void;
@@ -1677,6 +2216,7 @@ const BrandFormModal: FC<{
           <BrandEvergreen brand={liveBrand} />
           <BrandMilestoneCta brand={liveBrand} />
           <BrandInboxTriage brand={liveBrand} />
+          <BrandBlogChain brand={liveBrand} />
         </div>
       ) : null}
     </div>
